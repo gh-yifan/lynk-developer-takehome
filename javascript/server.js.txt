@@ -1,0 +1,64 @@
+/**
+ * Spacecraft Command Queue API
+ *
+ * Implement a priority-based command queue for spacecraft operations.
+ * See ../README.md for full requirements.
+ */
+
+const express = require('express');
+const app = express();
+const PORT = 8080;
+
+app.use(express.json());
+
+// TODO: Define your data structures here
+// Hint: You'll need to store commands with their properties
+
+
+/**
+ * Get all commands in priority order (HIGH -> MEDIUM -> LOW).
+ * Within the same priority, return in FIFO order.
+ *
+ * TODO: Implement this endpoint
+ */
+app.get('/commands', (req, res) => {
+  // TODO: Implement - return all commands in priority order
+  res.json({ commands: [] });
+});
+
+
+/**
+ * Create a new command in the queue.
+ *
+ * TODO: Implement this endpoint
+ * - Validate command text (non-empty, <= 198 chars)
+ * - Validate priority (HIGH, MEDIUM, LOW)
+ * - Assign ID, status=PENDING, timestamps
+ * - Add to queue
+ *
+ * Request body:
+ *   {
+ *     "command": "command text here",
+ *     "priority": "HIGH|MEDIUM|LOW"
+ *   }
+ *
+ * Response:
+ *   {
+ *     "command": {command object}
+ *   }
+ */
+app.post('/commands', (req, res) => {
+  // TODO: Implement command creation
+  res.status(201).json({ command: {} });
+});
+
+
+// TODO: Add more endpoints as needed:
+// - PATCH /commands/:id/status - Update command status
+// - DELETE /commands/:id - Delete a command
+// - GET /commands/:id - Get a specific command (optional)
+
+
+app.listen(PORT, () => {
+  console.log(`Command Queue API running on http://localhost:${PORT}`);
+});

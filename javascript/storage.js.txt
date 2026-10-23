@@ -1,0 +1,49 @@
+/**
+ * Optional Storage Helper
+ *
+ * This module provides simple file-based persistence for the command queue.
+ * You can use this if you want your queue to survive server restarts.
+ *
+ * Usage is completely optional - in-memory storage is acceptable.
+ *
+ * Example usage:
+ *   const { saveQueue, loadQueue } = require('./storage');
+ *
+ *   // Load queue on startup
+ *   const commands = loadQueue();
+ *
+ *   // Save queue after modifications
+ *   saveQueue(commands);
+ */
+
+const fs = require('fs');
+
+const STORAGE_FILE = 'queue_data.json';
+
+/**
+ * Save the command queue to a JSON file.
+ *
+ * @param {Array} commands - Array of command objects
+ */
+function saveQueue(commands) {
+  fs.writeFileSync(STORAGE_FILE, JSON.stringify(commands, null, 2));
+}
+
+/**
+ * Load the command queue from a JSON file.
+ *
+ * @returns {Array} Array of command objects, or empty array if file doesn't exist
+ */
+function loadQueue() {
+  try {
+    const data = fs.readFileSync(STORAGE_FILE, 'utf8');
+    return JSON.parse(data);
+  } catch (error) {
+    if (error.code === 'ENOENT') {
+      return [];
+    }
+    throw error;
+  }
+}
+
+module.exports = { saveQueue, loadQueue };
