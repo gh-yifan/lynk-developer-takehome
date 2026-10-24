@@ -1,7 +1,7 @@
 
 # storage
-3-tier map of priority to list of pointer of commands to avoid duplicate storage
-map of command id (str) to command for direct lookup (PATCH and DELETE)
+3-tier map of priority to list of pointer of commands
+map of command id (str) to command pointer for O(1) lookup (PATCH and DELETE)
 
 
 # operations
@@ -15,11 +15,19 @@ map of command id (str) to command for direct lookup (PATCH and DELETE)
 /DELETE - command id exists
 
 # considerations
-use pointers to Commands in the priority list. When Go re-allocates array, it is less heavy to copy pointers than the Command objects.
-racing requests - mutex / lock
+direct map for O(1) PATCH lookup 
+use pointers in the direct map and the priority lists to keep a single-source-of-truth (in the heap)
+racing requests - to prevent net/http from race, add mutex / synchronization.
 state transition validation - PATCH and DELETE; lookup valid state(s) in map; no middleware because it would not be relevant for GET and CREATE
 returning a 400 BadRequest for a malformed uuid vs 404. makes more sense a invalid uuid is a input error but to match the contract provided, it must return the 404 response.
 
 # decisions
-delegate validation to package-level, simple enough to handle validation with validator package, minimize custom code amount
-use mux for path parameter extraction (id)
+delegate validation to validate package, bubble validate error up in JSON, minimize custom code & intermixing with business logic
+use mux for path parameter extraction (e.g. id)
+linear search and shift-on-delete
+
+# new tests
+Delete at beginning, middle, and end - ensure FIFO order is preserved
+GET after PATCH - ensure the updated at timestamp is modified on PATCH (not stale)
+race-enabled test ensure writers don't overwrite status of command
+concurrent creates write to the Go map (append to the same slice), potentially losing an entry

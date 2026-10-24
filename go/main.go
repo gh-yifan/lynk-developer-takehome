@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/go-playground/validator/v10"
@@ -53,6 +54,7 @@ type Command struct {
 }
 
 type CommandStorage struct {
+	mu     sync.RWMutex
 	queue  map[Priority][]*Command // 3 keys with growing list, points to the command in the direct map
 	direct map[uuid.UUID]*Command  // command id -> pointer to command
 }
@@ -70,6 +72,9 @@ var validate = validator.New()
 //
 // TODO: Implement this handler
 func (c *CommandStorage) GetCommands(w http.ResponseWriter, r *http.Request) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
 	if r.Method != http.MethodGet {
 		writeJSONError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -98,6 +103,9 @@ func (c *CommandStorage) GetCommands(w http.ResponseWriter, r *http.Request) {
 // - Assign ID, status=PENDING, timestamps
 // - Add to queue
 func (c *CommandStorage) CreateCommand(w http.ResponseWriter, r *http.Request) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	if r.Method != http.MethodPost {
 		writeJSONError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -148,6 +156,9 @@ func writeJSONError(w http.ResponseWriter, message string, status int) {
 }
 
 func (c *CommandStorage) PatchCommand(w http.ResponseWriter, r *http.Request) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	if r.Method != http.MethodPatch {
 		writeJSONError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -194,6 +205,9 @@ func (c *CommandStorage) PatchCommand(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *CommandStorage) DeleteCommand(w http.ResponseWriter, r *http.Request) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	if r.Method != http.MethodDelete {
 		writeJSONError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return

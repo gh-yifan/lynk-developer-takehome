@@ -14,6 +14,9 @@ import subprocess
 import time
 import requests
 import json
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
+from threading import Barrier
 from typing import Dict, List, Optional, Tuple
 import os
 import signal
@@ -68,7 +71,7 @@ class ServerManager:
             elif self.language == "go":
                 os.chdir("go")
                 self.process = subprocess.Popen(
-                    ["go", "run", "main.go", "storage.go"],
+                    ["go", "run", "-race", "main.go", "storage.go"],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE
                 )
@@ -329,6 +332,126 @@ def test_delete_nonexistent_command(runner: TestRunner):
 
     runner.test("Delete non-existent command returns 404", test)
 
+# Additional regression tests, kept after the original validator cases.
+def test_valid_state_transition_to_failed(runner: TestRunner):
+    """Test valid state transition (EXECUTING -> FAILED)."""
+    def test():
+        response = requests.post(f"{BASE_URL}/commands", json={"command": "fail me", "priority": "LOW"})
+        assert response.status_code == 201, f"Expected 201, got {response.status_code}"
+        cmd_id = response.json()["command"]["id"]
+        response = requests.patch(f"{BASE_URL}/commands/{cmd_id}/status", json={"status": "EXECUTING"})
+        assert response.status_code == 200, f"Expected 200 entering EXECUTING, got {response.status_code}"
+        response = requests.patch(f"{BASE_URL}/commands/{cmd_id}/status", json={"status": "FAILED"})
+        assert response.status_code == 200, f"Expected 200 entering FAILED, got {response.status_code}"
+        assert response.json()["command"]["status"] == "FAILED"
+
+    runner.test("Extra: EXECUTING -> FAILED", test)
+
+def test_get_reflects_patch(runner: TestRunner):
+    """Ensure GET returns the patched status and updated timestamp."""
+    def test():
+        response = requests.post(f"{BASE_URL}/commands", json={"command": "check GET after PATCH", "priority": "HIGH"})
+        assert response.status_code == 201, f"Expected 201, got {response.status_code}"
+        created = response.json()["command"]
+        time.sleep(0.02)
+        response = requests.patch(f"{BASE_URL}/commands/{created['id']}/status", json={"status": "EXECUTING"})
+        assert response.status_code == 200, f"Expected 200, got {response.status_code}"
+        patched = response.json()["command"]
+        response = requests.get(f"{BASE_URL}/commands")
+        assert response.status_code == 200, f"Expected 200, got {response.status_code}"
+        fetched = next((cmd for cmd in response.json()["commands"] if cmd["id"] == created["id"]), None)
+        assert fetched is not None, "Patched command missing from GET /commands"
+        assert fetched["status"] == "EXECUTING", f"GET returned stale status: {fetched['status']}"
+        created_at = datetime.fromisoformat(created["created_at"].replace("Z", "+00:00"))
+        updated_at = datetime.fromisoformat(fetched["updated_at"].replace("Z", "+00:00"))
+        assert updated_at > created_at, "updated_at did not advance after PATCH"
+        assert fetched["updated_at"] == patched["updated_at"], "GET and PATCH returned different updated_at values"
+
+    runner.test("Extra: GET reflects PATCH status and updated_at", test)
+
+def test_competing_terminal_transitions(runner: TestRunner):
+    """Only one of two concurrent terminal transitions from EXECUTING may succeed."""
+    def test():
+        for iteration in range(10):
+            response = requests.post(f"{BASE_URL}/commands", json={"command": f"competing-transition-{iteration}", "priority": "HIGH"})
+            assert response.status_code == 201, f"Expected 201, got {response.status_code}"
+            cmd_id = response.json()["command"]["id"]
+            response = requests.patch(f"{BASE_URL}/commands/{cmd_id}/status", json={"status": "EXECUTING"})
+            assert response.status_code == 200, f"Expected 200 entering EXECUTING, got {response.status_code}"
+
+            start = Barrier(3)
+
+            def patch_terminal(status):
+                start.wait()
+                return requests.patch(f"{BASE_URL}/commands/{cmd_id}/status", json={"status": status}, timeout=10)
+
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                completed = executor.submit(patch_terminal, "COMPLETED")
+                failed = executor.submit(patch_terminal, "FAILED")
+                start.wait()
+                responses = [completed.result(), failed.result()]
+
+            statuses = sorted(response.status_code for response in responses)
+            response = requests.get(f"{BASE_URL}/commands")
+            assert response.status_code == 200, f"GET after competing PATCH returned {response.status_code}"
+            command = next(
+                (item for item in response.json()["commands"] if item["id"] == cmd_id),
+                None,
+            )
+            final_status = command["status"] if command else "<missing>"
+            details = [
+                {"http_status": item.status_code, "body": item.text}
+                for item in responses
+            ]
+            assert statuses == [200, 400], (
+                f"Expected one 200 and one 400, got {statuses}; "
+                f"PATCH responses={details}; final stored status={final_status}"
+            )
+
+    runner.test("Extra: competing terminal PATCH requests", test)
+
+def test_delete_queue_positions(runner: TestRunner):
+    """Deleting first, middle, and last entries preserves FIFO order."""
+    def test():
+        for target_index in (0, 2, 3):
+            created = []
+            for i in range(4):
+                response = requests.post(f"{BASE_URL}/commands", json={"command": f"delete-{target_index}-{i}", "priority": "MEDIUM"})
+                assert response.status_code == 201, f"Expected 201, got {response.status_code}"
+                created.append(response.json()["command"])
+
+            target = created[target_index]
+            response = requests.delete(f"{BASE_URL}/commands/{target['id']}")
+            assert response.status_code == 200, f"Delete returned {response.status_code}"
+            response = requests.get(f"{BASE_URL}/commands")
+            remaining = [cmd["id"] for cmd in response.json()["commands"] if cmd.get("command", "").startswith(f"delete-{target_index}-")]
+            expected = [cmd["id"] for i, cmd in enumerate(created) if i != target_index]
+            assert remaining == expected, f"FIFO after deleting position {target_index}: got {remaining}, want {expected}"
+
+    runner.test("Extra: delete at first, middle, and last positions", test)
+
+def test_concurrent_creates(runner: TestRunner):
+    """Concurrent POSTs must all be retained; Go runs with the race detector."""
+    def test():
+        count = 32
+
+        def create(index):
+            return requests.post(f"{BASE_URL}/commands", json={"command": f"concurrent-create-{index}", "priority": "LOW"}, timeout=10)
+
+        with ThreadPoolExecutor(max_workers=count) as executor:
+            responses = list(executor.map(create, range(count)))
+        for response in responses:
+            assert response.status_code == 201, f"Concurrent POST returned {response.status_code}: {response.text}"
+
+        response = requests.get(f"{BASE_URL}/commands")
+        assert response.status_code == 200, f"Expected 200, got {response.status_code}"
+        commands = [cmd for cmd in response.json()["commands"] if cmd.get("command", "").startswith("concurrent-create-")]
+        assert len(commands) == count, f"Retained {len(commands)} of {count} concurrent creates"
+        ids = [cmd["id"] for cmd in commands]
+        assert len(set(ids)) == count, "Concurrent creates produced duplicate IDs"
+
+    runner.test("Extra: concurrent command creation", test)
+
 def main():
     if len(sys.argv) != 2:
         print("Usage: python3 validate.py [python|javascript|rust|java|go]")
@@ -367,6 +490,13 @@ def main():
         test_invalid_state_transition(runner)
         test_delete_command(runner)
         test_delete_nonexistent_command(runner)
+
+        print(f"\n{Colors.BLUE}Additional regression tests...{Colors.END}\n")
+        test_valid_state_transition_to_failed(runner)
+        test_get_reflects_patch(runner)
+        test_competing_terminal_transitions(runner)
+        test_delete_queue_positions(runner)
+        test_concurrent_creates(runner)
 
         runner.report()
 
