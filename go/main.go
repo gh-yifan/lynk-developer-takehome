@@ -10,32 +10,80 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"sort"
+	"time"
+
+	"github.com/go-playground/validator/v10"
+	"github.com/google/uuid"
 )
 
 // TODO: Define your data structures here
 // Hint: You'll need structs for Command, Priority, Status, etc.
 // Example:
-// type Priority string
-// const (
-//     PriorityHigh   Priority = "HIGH"
-//     PriorityMedium Priority = "MEDIUM"
-//     PriorityLow    Priority = "LOW"
-// )
+type Priority string
+
+const (
+	PriorityHigh    Priority = "HIGH"
+	PriorityMedium  Priority = "MEDIUM"
+	PriorityLow     Priority = "LOW"
+	StatusPending   Status   = "PENDING"
+	StatusExecuting Status   = "EXECUTING"
+	StatusCompleted Status   = "COMPLETED"
+	StatusFailed    Status   = "FAILED"
+)
+
+type Status string
+
+type CommandReqPost struct {
+	Command  string   `json:"command" validate:"required,min=1,max=198"`
+	Priority Priority `json:"priority" validate:"required,oneof=HIGH MEDIUM LOW"`
+}
+
+type CommandReqPatch struct {
+	Status Status `json:"status" validate:"required,oneof=PENDING EXECUTING COMPLETED"`
+}
+
+// capital or lowercase?
+type Command struct {
+	Id        uuid.UUID `json:"id"`
+	Command   string    `json:"command"`
+	Priority  Priority  `json:"priority"`
+	Status    Status    `json:"status"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type CommandStorage struct {
+	queue  map[Priority][]Command // 3 keys with growing list, points to the command in the direct map
+	direct map[uuid.UUID]*Command // command id -> pointer to command
+}
+
+var valid = map[Status][]Status{
+	StatusPending:   []Status{StatusExecuting},
+	StatusExecuting: []Status{StatusCompleted, StatusFailed},
+}
+
+var validate = validator.New()
 
 // GetCommands handles GET /commands
 // Get all commands in priority order (HIGH -> MEDIUM -> LOW).
 // Within the same priority, return in FIFO order.
 //
 // TODO: Implement this handler
-func GetCommands(w http.ResponseWriter, r *http.Request) {
+func (c *CommandStorage) GetCommands(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		writeJSONError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	// TODO: Implement - return all commands in priority order
+	commands := make([]Command, 0,
+		len(c.queue[PriorityHigh])+len(c.queue[PriorityMedium])+len(c.queue[PriorityLow]))
+	commands = append(commands, c.queue[PriorityHigh]...)
+	commands = append(commands, c.queue[PriorityMedium]...)
+	commands = append(commands, c.queue[PriorityLow]...)
+
 	response := map[string]interface{}{
-		"commands": []interface{}{},
+		"commands": commands,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -50,19 +98,132 @@ func GetCommands(w http.ResponseWriter, r *http.Request) {
 // - Validate priority (HIGH, MEDIUM, LOW)
 // - Assign ID, status=PENDING, timestamps
 // - Add to queue
-func CreateCommand(w http.ResponseWriter, r *http.Request) {
+func (c *CommandStorage) CreateCommand(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		writeJSONError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
+	var req CommandReqPost
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONError(w, `{"error": "Invalid JSON body"}`, http.StatusBadRequest)
+		return
+	}
+
+	if err := validate.Struct(req); err != nil {
+		writeJSONError(w, fmt.Sprintf("Invalid request: %s", err.Error()), http.StatusBadRequest)
+		return
+	}
+
+	// validate priority is one of enum
+	// validate command is not empty and within char limits
+
+	cmdId := uuid.New()
+
+	cmd := &Command{
+		Id:        cmdId,
+		Priority:  req.Priority,
+		Command:   req.Command,
+		Status:    StatusPending,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+
+	c.queue[req.Priority] = append(c.queue[req.Priority], *cmd)
+	c.direct[cmdId] = cmd
+
 	// TODO: Implement command creation
 	response := map[string]interface{}{
-		"command": map[string]interface{}{},
+		"command": cmd,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(response)
+}
+
+func writeJSONError(w http.ResponseWriter, message string, status int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(map[string]string{"error": message})
+}
+
+func (c *CommandStorage) PatchCommand(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPatch {
+		writeJSONError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req CommandReqPatch
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONError(w, "Invalid JSON body", http.StatusBadRequest)
+		return
+	}
+
+	idStr := r.PathValue("id")
+	id, err := uuid.Parse(idStr)
+	cmd, ok := c.direct[id]
+	if err != nil || !ok {
+		writeJSONError(w, "Command not found", http.StatusNotFound)
+		return
+	}
+
+	// validate state transition
+	var found bool
+	if acceptable, ok := valid[cmd.Status]; ok {
+		for _, s := range acceptable {
+			if req.Status == s {
+				// is in the accepted range
+				found = true
+			}
+		}
+	}
+
+	if !found {
+		writeJSONError(w, fmt.Sprintf("Invalid state transition: %s -> %s", cmd.Status, req.Status), http.StatusBadRequest)
+		return
+	}
+
+	cmd.Status = req.Status
+	response := map[string]interface{}{
+		"command": cmd,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+func (c *CommandStorage) DeleteCommand(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		writeJSONError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	idStr := r.PathValue("id")
+	id, err := uuid.Parse(idStr)
+	cmd, ok := c.direct[id]
+	if err != nil || !ok {
+		writeJSONError(w, `{"error": "Command not found"}`, http.StatusNotFound)
+		return
+	}
+
+	priority := cmd.Priority
+	cmds := c.queue[priority] // keeps its own metadata (len)
+	n := len(cmds)
+	// remove the command from the priority queue while maintaining FIFO order
+	idx := sort.Search(n, func(i int) bool {
+		return cmds[i].Id == id
+	})
+	tmp := append(cmds[:idx], cmds[idx+1:]...) // keeps its own metadata
+
+	delete(c.direct, id)
+	c.queue[priority] = tmp // assign the new metadata to the original map
+
+	response := map[string]interface{}{
+		"message": "Command deleted",
+	}
+
+	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
 }
 
@@ -72,17 +233,18 @@ func CreateCommand(w http.ResponseWriter, r *http.Request) {
 // - GetCommand - GET /commands/{id} (optional)
 
 func main() {
-	http.HandleFunc("/commands", func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodGet:
-			GetCommands(w, r)
-		case http.MethodPost:
-			CreateCommand(w, r)
-		default:
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		}
-	})
+	storage := &CommandStorage{
+		queue:  make(map[Priority][]Command),
+		direct: make(map[uuid.UUID]*Command),
+	}
+
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("GET /commands", storage.GetCommands)
+	mux.HandleFunc("POST /commands", storage.CreateCommand)
+	mux.HandleFunc("PATCH /commands/{id}/status", storage.PatchCommand)
+	mux.HandleFunc("DELETE /commands/{id}", storage.DeleteCommand)
 
 	fmt.Println("Command Queue API running on http://localhost:8080")
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	log.Fatal(http.ListenAndServe(":8080", mux))
 }
