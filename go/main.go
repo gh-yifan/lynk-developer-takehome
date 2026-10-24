@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"sort"
 	"time"
 
 	"github.com/go-playground/validator/v10"
@@ -40,7 +39,7 @@ type CommandReqPost struct {
 }
 
 type CommandReqPatch struct {
-	Status Status `json:"status" validate:"required,oneof=PENDING EXECUTING COMPLETED"`
+	Status Status `json:"status" validate:"required,oneof=PENDING EXECUTING COMPLETED FAILED"`
 }
 
 // capital or lowercase?
@@ -54,8 +53,8 @@ type Command struct {
 }
 
 type CommandStorage struct {
-	queue  map[Priority][]Command // 3 keys with growing list, points to the command in the direct map
-	direct map[uuid.UUID]*Command // command id -> pointer to command
+	queue  map[Priority][]*Command // 3 keys with growing list, points to the command in the direct map
+	direct map[uuid.UUID]*Command  // command id -> pointer to command
 }
 
 var valid = map[Status][]Status{
@@ -76,7 +75,7 @@ func (c *CommandStorage) GetCommands(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	commands := make([]Command, 0,
+	commands := make([]*Command, 0,
 		len(c.queue[PriorityHigh])+len(c.queue[PriorityMedium])+len(c.queue[PriorityLow]))
 	commands = append(commands, c.queue[PriorityHigh]...)
 	commands = append(commands, c.queue[PriorityMedium]...)
@@ -106,7 +105,7 @@ func (c *CommandStorage) CreateCommand(w http.ResponseWriter, r *http.Request) {
 
 	var req CommandReqPost
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSONError(w, `{"error": "Invalid JSON body"}`, http.StatusBadRequest)
+		writeJSONError(w, "Invalid JSON body", http.StatusBadRequest)
 		return
 	}
 
@@ -129,7 +128,7 @@ func (c *CommandStorage) CreateCommand(w http.ResponseWriter, r *http.Request) {
 		UpdatedAt: time.Now(),
 	}
 
-	c.queue[req.Priority] = append(c.queue[req.Priority], *cmd)
+	c.queue[req.Priority] = append(c.queue[req.Priority], cmd)
 	c.direct[cmdId] = cmd
 
 	// TODO: Implement command creation
@@ -185,6 +184,7 @@ func (c *CommandStorage) PatchCommand(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cmd.Status = req.Status
+	cmd.UpdatedAt = time.Now()
 	response := map[string]interface{}{
 		"command": cmd,
 	}
@@ -203,21 +203,20 @@ func (c *CommandStorage) DeleteCommand(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(idStr)
 	cmd, ok := c.direct[id]
 	if err != nil || !ok {
-		writeJSONError(w, `{"error": "Command not found"}`, http.StatusNotFound)
+		writeJSONError(w, "Command not found", http.StatusNotFound)
 		return
 	}
 
-	priority := cmd.Priority
-	cmds := c.queue[priority] // keeps its own metadata (len)
-	n := len(cmds)
+	queue := c.queue[cmd.Priority] // keeps its own metadata (len)
 	// remove the command from the priority queue while maintaining FIFO order
-	idx := sort.Search(n, func(i int) bool {
-		return cmds[i].Id == id
-	})
-	tmp := append(cmds[:idx], cmds[idx+1:]...) // keeps its own metadata
+	for i, cmdPtr := range queue {
+		if cmdPtr == cmd {
+			c.queue[cmd.Priority] = append(queue[:i], queue[i+1:]...)
+			break
+		}
+	}
 
 	delete(c.direct, id)
-	c.queue[priority] = tmp // assign the new metadata to the original map
 
 	response := map[string]interface{}{
 		"message": "Command deleted",
@@ -234,7 +233,7 @@ func (c *CommandStorage) DeleteCommand(w http.ResponseWriter, r *http.Request) {
 
 func main() {
 	storage := &CommandStorage{
-		queue:  make(map[Priority][]Command),
+		queue:  make(map[Priority][]*Command),
 		direct: make(map[uuid.UUID]*Command),
 	}
 
