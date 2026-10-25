@@ -6,6 +6,7 @@
 package main
 
 import (
+	"container/list"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -55,8 +56,8 @@ type Command struct {
 
 type CommandStorage struct {
 	mu     sync.RWMutex
-	queue  map[Priority][]*Command // 3 keys with growing list, points to the command in the direct map
-	direct map[uuid.UUID]*Command  // command id -> pointer to command
+	queue  map[Priority]*list.List     // 3 keys with growing list, points to the command in the direct map
+	direct map[uuid.UUID]*list.Element // command id -> pointer to command
 }
 
 var valid = map[Status][]Status{
@@ -81,10 +82,15 @@ func (c *CommandStorage) GetCommands(w http.ResponseWriter, r *http.Request) {
 	}
 
 	commands := make([]*Command, 0,
-		len(c.queue[PriorityHigh])+len(c.queue[PriorityMedium])+len(c.queue[PriorityLow]))
-	commands = append(commands, c.queue[PriorityHigh]...)
-	commands = append(commands, c.queue[PriorityMedium]...)
-	commands = append(commands, c.queue[PriorityLow]...)
+		c.queue[PriorityHigh].Len()+c.queue[PriorityMedium].Len()+c.queue[PriorityLow].Len())
+	appendCommands := func(queue *list.List) {
+		for element := queue.Front(); element != nil; element = element.Next() {
+			commands = append(commands, element.Value.(*Command))
+		}
+	}
+	appendCommands(c.queue[PriorityHigh])
+	appendCommands(c.queue[PriorityMedium])
+	appendCommands(c.queue[PriorityLow])
 
 	response := map[string]interface{}{
 		"commands": commands,
@@ -136,8 +142,8 @@ func (c *CommandStorage) CreateCommand(w http.ResponseWriter, r *http.Request) {
 		UpdatedAt: time.Now(),
 	}
 
-	c.queue[req.Priority] = append(c.queue[req.Priority], cmd)
-	c.direct[cmdId] = cmd
+	element := c.queue[req.Priority].PushBack(cmd)
+	c.direct[cmdId] = element
 
 	// TODO: Implement command creation
 	response := map[string]interface{}{
@@ -172,12 +178,13 @@ func (c *CommandStorage) PatchCommand(w http.ResponseWriter, r *http.Request) {
 
 	idStr := r.PathValue("id")
 	id, err := uuid.Parse(idStr)
-	cmd, ok := c.direct[id]
+	elem, ok := c.direct[id]
 	if err != nil || !ok {
 		writeJSONError(w, "Command not found", http.StatusNotFound)
 		return
 	}
 
+	cmd := elem.Value.(*Command)
 	// validate state transition
 	var found bool
 	if acceptable, ok := valid[cmd.Status]; ok {
@@ -215,20 +222,15 @@ func (c *CommandStorage) DeleteCommand(w http.ResponseWriter, r *http.Request) {
 
 	idStr := r.PathValue("id")
 	id, err := uuid.Parse(idStr)
-	cmd, ok := c.direct[id]
+	elem, ok := c.direct[id]
 	if err != nil || !ok {
 		writeJSONError(w, "Command not found", http.StatusNotFound)
 		return
 	}
 
-	queue := c.queue[cmd.Priority] // keeps its own metadata (len)
+	cmd := elem.Value.(*Command)
 	// remove the command from the priority queue while maintaining FIFO order
-	for i, cmdPtr := range queue {
-		if cmdPtr == cmd {
-			c.queue[cmd.Priority] = append(queue[:i], queue[i+1:]...)
-			break
-		}
-	}
+	c.queue[cmd.Priority].Remove(elem) // list isn't a container itself, just the pointers for all nodes that belong to it
 
 	delete(c.direct, id)
 
@@ -247,9 +249,12 @@ func (c *CommandStorage) DeleteCommand(w http.ResponseWriter, r *http.Request) {
 
 func main() {
 	storage := &CommandStorage{
-		queue:  make(map[Priority][]*Command),
-		direct: make(map[uuid.UUID]*Command),
+		queue:  make(map[Priority]*list.List),
+		direct: make(map[uuid.UUID]*list.Element),
 	}
+	storage.queue[PriorityHigh] = list.New()
+	storage.queue[PriorityMedium] = list.New()
+	storage.queue[PriorityLow] = list.New()
 
 	mux := http.NewServeMux()
 

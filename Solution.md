@@ -24,7 +24,7 @@ returning a 400 BadRequest for a malformed uuid vs 404. makes more sense a inval
 # decisions
 delegate validation to validate package, bubble validate error up in JSON, minimize custom code & intermixing with business logic
 use mux for path parameter extraction (e.g. id)
-linear search and shift-on-delete
+doubly linked list among commands for O(1) deletion
 
 # new tests
 Delete at beginning, middle, and end - ensure FIFO order is preserved
