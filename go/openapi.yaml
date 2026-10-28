@@ -1,0 +1,261 @@
+openapi: 3.0.3
+info:
+  title: Spacecraft Command Queue API
+  version: 1.0.0
+  description: >-
+    In-memory API for creating, listing, dispatching, updating, and deleting
+    spacecraft commands. Commands are listed and dispatched by priority
+    (HIGH, MEDIUM, LOW), preserving FIFO order within each priority.
+servers:
+  - url: http://localhost:8080
+    description: Local development server
+tags:
+  - name: Commands
+paths:
+  /openapi.yaml:
+    get:
+      tags: [Commands]
+      operationId: getOpenAPISpec
+      summary: Get the OpenAPI specification
+      responses:
+        '200':
+          description: The OpenAPI document in YAML format.
+          content:
+            application/yaml:
+              schema:
+                type: object
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+  /commands:
+    get:
+      tags: [Commands]
+      operationId: listCommands
+      summary: List all commands
+      description: Returns all commands in priority order, preserving FIFO order within each priority.
+      responses:
+        '200':
+          description: Commands returned successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandListResponse'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+    post:
+      tags: [Commands]
+      operationId: createCommand
+      summary: Create a command
+      description: >-
+        Creates a PENDING command. Leading and trailing whitespace in command
+        text is trimmed before validation and storage; the trimmed text must
+        contain non-whitespace characters and be at most 198 characters.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCommandRequest'
+            example:
+              command: shutdown satellite radio
+              priority: HIGH
+      responses:
+        '201':
+          description: Command created successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+        '400':
+          description: Invalid JSON, blank or overlong command text, or invalid priority.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+  /commands/dispatch:
+    post:
+      tags: [Commands]
+      operationId: dispatchNextCommand
+      summary: Dispatch the next pending command
+      description: >-
+        Selects the highest-priority pending command, using FIFO order within
+        that priority, and changes its status to EXECUTING.
+      responses:
+        '200':
+          description: Command dispatched successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+        '404':
+          description: No pending commands are available.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+  /commands/{id}/status:
+    patch:
+      tags: [Commands]
+      operationId: updateCommandStatus
+      summary: Update a command's status
+      description: >-
+        Applies one allowed transition: PENDING to EXECUTING, or EXECUTING to
+        COMPLETED or FAILED. Completed and failed commands are terminal.
+      parameters:
+        - $ref: '#/components/parameters/CommandId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateCommandStatusRequest'
+            example:
+              status: EXECUTING
+      responses:
+        '200':
+          description: Command status updated successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandResponse'
+        '400':
+          description: Invalid JSON or an invalid status value.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Command ID is malformed or no matching command exists.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '409':
+          description: The requested transition is not valid for the command's current status.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      tags: [Commands]
+      operationId: deleteCommand
+      summary: Delete a command
+      parameters:
+        - $ref: '#/components/parameters/CommandId'
+      responses:
+        '200':
+          description: Command deleted successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteCommandResponse'
+        '404':
+          description: Command ID is malformed or no matching command exists.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+components:
+  responses:
+    MethodNotAllowed:
+      description: The HTTP method is not supported for this path.
+      headers:
+        Allow:
+          description: Methods supported for this path.
+          schema:
+            type: string
+      content:
+        text/plain:
+          schema:
+            type: string
+          example: "Method Not Allowed\n"
+  parameters:
+    CommandId:
+      name: id
+      in: path
+      required: true
+      description: UUID of the command.
+      schema:
+        type: string
+        format: uuid
+  schemas:
+    Priority:
+      type: string
+      enum: [HIGH, MEDIUM, LOW]
+    Status:
+      type: string
+      enum: [PENDING, EXECUTING, COMPLETED, FAILED]
+    Command:
+      type: object
+      required: [id, command, priority, status, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        command:
+          type: string
+          minLength: 1
+          maxLength: 198
+          description: Trimmed, non-blank command text of at most 198 characters.
+        priority:
+          $ref: '#/components/schemas/Priority'
+        status:
+          $ref: '#/components/schemas/Status'
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    CreateCommandRequest:
+      type: object
+      required: [command, priority]
+      properties:
+        command:
+          type: string
+          description: >-
+            Text is trimmed before validation and storage. The trimmed value
+            must be non-blank and no longer than 198 characters.
+          example: shutdown satellite radio
+        priority:
+          $ref: '#/components/schemas/Priority'
+    UpdateCommandStatusRequest:
+      type: object
+      required: [status]
+      properties:
+        status:
+          $ref: '#/components/schemas/Status'
+    CommandResponse:
+      type: object
+      required: [command]
+      properties:
+        command:
+          $ref: '#/components/schemas/Command'
+    CommandListResponse:
+      type: object
+      required: [commands]
+      properties:
+        commands:
+          type: array
+          items:
+            $ref: '#/components/schemas/Command'
+    DeleteCommandResponse:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+          example: Command deleted
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string

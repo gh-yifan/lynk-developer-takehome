@@ -270,7 +270,7 @@ func (c *CommandStorage) PatchCommand(w http.ResponseWriter, r *http.Request) {
 	cmd := elem.Value.(*Command)
 	// validate state transition
 	if !cmd.Status.CanTransitionTo(req.Status) {
-		writeJSONError(w, "invalid state transition", http.StatusBadRequest)
+		writeJSONError(w, "invalid state transition", http.StatusConflict)
 		return
 	}
 	if cmd.Status == StatusPending && req.Status == StatusExecuting {

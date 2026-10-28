@@ -198,6 +198,18 @@ func TestDispatchNextReturnsNotFoundWhenNoPendingCommands(t *testing.T) {
 	}
 }
 
+func TestPatchCommandInvalidTransitionReturnsConflict(t *testing.T) {
+	storage := newTestCommandStorage()
+	command := addTestCommand(storage, PriorityHigh, StatusCompleted, "completed command")
+	request := httptest.NewRequest(http.MethodPatch, "/commands/"+command.Id.String()+"/status", strings.NewReader(`{"status":"EXECUTING"}`))
+	recorder := httptest.NewRecorder()
+	newRouter(storage).ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusConflict {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusConflict, recorder.Code, recorder.Body.String())
+	}
+}
+
 func TestOpenAPISpecEndpoint(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/openapi.yaml", nil)
 	recorder := httptest.NewRecorder()
