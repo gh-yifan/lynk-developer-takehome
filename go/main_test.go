@@ -198,6 +198,22 @@ func TestDispatchNextReturnsNotFoundWhenNoPendingCommands(t *testing.T) {
 	}
 }
 
+func TestOpenAPISpecEndpoint(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/openapi.yaml", nil)
+	recorder := httptest.NewRecorder()
+	newRouter(newTestCommandStorage()).ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, recorder.Code)
+	}
+	if recorder.Header().Get("Content-Type") != "application/yaml" {
+		t.Fatalf("expected YAML content type, got %q", recorder.Header().Get("Content-Type"))
+	}
+	if !strings.Contains(recorder.Body.String(), "openapi: 3.0.3") {
+		t.Fatalf("expected OpenAPI YAML body, got %q", recorder.Body.String())
+	}
+}
+
 func TestCreateCommandValidationAndTrim(t *testing.T) {
 	tests := []struct {
 		name       string
