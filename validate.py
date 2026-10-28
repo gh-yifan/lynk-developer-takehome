@@ -342,7 +342,7 @@ def test_invalid_state_transition(runner: TestRunner):
             f"{BASE_URL}/commands/{cmd_id}/status",
             json={"status": "COMPLETED"}
         )
-        assert response.status_code == 400, f"Expected 400 for invalid transition, got {response.status_code}"
+        assert response.status_code == 409, f"Expected 409 for invalid transition, got {response.status_code}"
         data = response.json()
         assert "error" in data, "Error response should contain 'error' field"
         assert "transition" in data["error"].lower(), "Error should mention invalid transition"
@@ -448,8 +448,8 @@ def test_competing_terminal_transitions(runner: TestRunner):
                 {"http_status": item.status_code, "body": item.text}
                 for item in responses
             ]
-            assert statuses == [200, 400], (
-                f"Expected one 200 and one 400, got {statuses}; "
+            assert statuses == [200, 409], (
+                f"Expected one 200 and one 409, got {statuses}; "
                 f"PATCH responses={details}; final stored status={final_status}"
             )
 
@@ -536,7 +536,7 @@ def test_rejected_transitions_preserve_status(runner: TestRunner):
                 f"{BASE_URL}/commands/{command_id}/status",
                 json={"status": requested_status}
             )
-            assert response.status_code == 400, f"Expected 400 for {label}, got {response.status_code}"
+            assert response.status_code == 409, f"Expected 409 for {label}, got {response.status_code}"
 
             response = requests.get(f"{BASE_URL}/commands")
             assert response.status_code == 200, f"GET after rejected transition returned {response.status_code}"
