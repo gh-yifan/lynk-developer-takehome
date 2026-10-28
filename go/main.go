@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -62,9 +63,13 @@ type CommandStorage struct {
 	direct map[uuid.UUID]*list.Element // command id -> pointer to command
 }
 
-var valid = map[Status][]Status{
+var validTransitions = map[Status][]Status{
 	StatusPending:   []Status{StatusExecuting},
 	StatusExecuting: []Status{StatusCompleted, StatusFailed},
+}
+
+func (s Status) CanTransitionTo(next Status) bool {
+	return slices.Contains(validTransitions[s], next) // nil slice for terminal states -> false
 }
 
 func newValidator() *validator.Validate {
@@ -227,17 +232,7 @@ func (c *CommandStorage) PatchCommand(w http.ResponseWriter, r *http.Request) {
 
 	cmd := elem.Value.(*Command)
 	// validate state transition
-	var found bool
-	if acceptable, ok := valid[cmd.Status]; ok {
-		for _, s := range acceptable {
-			if req.Status == s {
-				// is in the accepted range
-				found = true
-			}
-		}
-	}
-
-	if !found {
+	if !cmd.Status.CanTransitionTo(req.Status) {
 		writeJSONError(w, "invalid state transition", http.StatusBadRequest)
 		return
 	}
