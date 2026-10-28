@@ -103,7 +103,9 @@ paths:
       summary: Update a command's status
       description: >-
         Applies one allowed transition: PENDING to EXECUTING, or EXECUTING to
-        COMPLETED or FAILED. Completed and failed commands are terminal.
+        COMPLETED or FAILED. Completed and failed commands are terminal. The
+        request body must contain only the status property; additional properties
+        are rejected, including command fields such as priority.
       parameters:
         - $ref: '#/components/parameters/CommandId'
       requestBody:
@@ -122,7 +124,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/CommandResponse'
         '400':
-          description: Invalid JSON or an invalid status value.
+          description: Invalid JSON, an invalid status value, or additional request properties. Additional properties return the error "only status is allowed".
           content:
             application/json:
               schema:
@@ -228,6 +230,7 @@ components:
           $ref: '#/components/schemas/Priority'
     UpdateCommandStatusRequest:
       type: object
+      additionalProperties: false
       required: [status]
       properties:
         status:

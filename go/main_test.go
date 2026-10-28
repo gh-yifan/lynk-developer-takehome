@@ -210,6 +210,40 @@ func TestPatchCommandInvalidTransitionReturnsConflict(t *testing.T) {
 	}
 }
 
+func TestPatchCommandRejectsAdditionalFields(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "known command field", body: `{"status":"EXECUTING","priority":"LOW"}`},
+		{name: "unknown field", body: `{"status":"EXECUTING","unexpected":true}`},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			storage := newTestCommandStorage()
+			command := addTestCommand(storage, PriorityHigh, StatusPending, "pending command")
+			request := httptest.NewRequest(http.MethodPatch, "/commands/"+command.Id.String()+"/status", strings.NewReader(test.body))
+			recorder := httptest.NewRecorder()
+			newRouter(storage).ServeHTTP(recorder, request)
+
+			if recorder.Code != http.StatusBadRequest {
+				t.Fatalf("expected status %d, got %d: %s", http.StatusBadRequest, recorder.Code, recorder.Body.String())
+			}
+			var response map[string]string
+			if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+				t.Fatalf("decode error response: %v", err)
+			}
+			if response["error"] != "only status is allowed" {
+				t.Fatalf("error = %q, want %q", response["error"], "only status is allowed")
+			}
+			if command.Status != StatusPending {
+				t.Fatalf("command status changed to %s after rejected request", command.Status)
+			}
+		})
+	}
+}
+
 func TestOpenAPISpecEndpoint(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/openapi.yaml", nil)
 	recorder := httptest.NewRecorder()
