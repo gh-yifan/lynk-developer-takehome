@@ -148,8 +148,6 @@ func (c *CommandStorage) GetCommands(w http.ResponseWriter, r *http.Request) {
 // - Assign ID, status=PENDING, timestamps
 // - Add to queue
 func (c *CommandStorage) CreateCommand(w http.ResponseWriter, r *http.Request) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
 
 	if r.Method != http.MethodPost {
 		writeJSONError(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -167,6 +165,10 @@ func (c *CommandStorage) CreateCommand(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, validationErrorMessage(err), http.StatusBadRequest)
 		return
 	}
+
+	// moved here to prevent Create from starving other operations while waiting for input
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
 	cmdId := uuid.New()
 
@@ -199,8 +201,6 @@ func writeJSONError(w http.ResponseWriter, message string, status int) {
 }
 
 func (c *CommandStorage) PatchCommand(w http.ResponseWriter, r *http.Request) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
 
 	if r.Method != http.MethodPatch {
 		writeJSONError(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -216,6 +216,9 @@ func (c *CommandStorage) PatchCommand(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, validationErrorMessage(err), http.StatusBadRequest)
 		return
 	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
 	idStr := r.PathValue("id")
 	id, err := uuid.Parse(idStr)
