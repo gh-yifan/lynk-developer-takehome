@@ -14,6 +14,13 @@ map of command id (str) to command pointer for O(1) lookup (PATCH and DELETE)
 # validations
 /DELETE - command id exists
 
+# request validation
+request DTOs (Data Transfer Objects) define the JSON fields and validation rules for each endpoint; they are separate from the stored Command model
+register the validator library's notblank rule once and declare it on the command DTO alongside the 198-character limit
+trim leading and trailing command whitespace before validation and storage; preserve internal whitespace
+validate each endpoint's DTO in its handler because POST and PATCH have different fields and rules; no general validation middleware
+translate validator failures into concise, stable API messages rather than returning raw library errors
+
 # considerations
 direct map for O(1) PATCH lookup 
 use pointers in the direct map and the priority lists to keep a single-source-of-truth (in the heap)
@@ -22,9 +29,10 @@ state transition validation - PATCH and DELETE; lookup valid state(s) in map; no
 returning a 400 BadRequest for a malformed uuid vs 404. makes more sense a invalid uuid is a input error but to match the contract provided, it must return the 404 response.
 
 # decisions
-delegate validation to validate package, bubble validate error up in JSON, minimize custom code & intermixing with business logic
+use the validator package for DTO rules and custom notblank behavior; keep API error wording in application code
+keep validation endpoint-specific rather than using general middleware
 use mux for path parameter extraction (e.g. id)
-doubly linked list among commands for O(1) deletion
+linear search and shift-on-delete
 
 # new tests
 Delete at beginning, middle, and end - ensure FIFO order is preserved

@@ -11,10 +11,12 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/go-playground/validator/v10"
+	"github.com/go-playground/validator/v10/non-standard/validators"
 	"github.com/google/uuid"
 )
 
@@ -36,7 +38,7 @@ const (
 type Status string
 
 type CommandReqPost struct {
-	Command  string   `json:"command" validate:"required,min=1,max=198"`
+	Command  string   `json:"command" validate:"notblank,max=198"`
 	Priority Priority `json:"priority" validate:"required,oneof=HIGH MEDIUM LOW"`
 }
 
@@ -65,7 +67,44 @@ var valid = map[Status][]Status{
 	StatusExecuting: []Status{StatusCompleted, StatusFailed},
 }
 
-var validate = validator.New()
+func newValidator() *validator.Validate {
+	validate := validator.New()
+	if err := validate.RegisterValidation("notblank", validators.NotBlank); err != nil {
+		panic(err)
+	}
+	return validate
+}
+
+var validate = newValidator()
+
+func validationErrorMessage(err error) string {
+	validationErrors, ok := err.(validator.ValidationErrors)
+	if !ok || len(validationErrors) == 0 {
+		return "invalid request"
+	}
+
+	fieldError := validationErrors[0]
+	switch fieldError.StructField() {
+	case "Command":
+		switch fieldError.Tag() {
+		case "notblank":
+			return "command must not be blank"
+		case "max":
+			return "command must be at most 198 characters"
+		}
+	case "Priority":
+		if fieldError.Tag() == "required" {
+			return "priority is required"
+		}
+		return "priority must be HIGH, MEDIUM, or LOW"
+	case "Status":
+		if fieldError.Tag() == "required" {
+			return "status is required"
+		}
+		return "status must be PENDING, EXECUTING, COMPLETED, or FAILED"
+	}
+	return "invalid request"
+}
 
 // GetCommands handles GET /commands
 // Get all commands in priority order (HIGH -> MEDIUM -> LOW).
@@ -122,14 +161,12 @@ func (c *CommandStorage) CreateCommand(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, "Invalid JSON body", http.StatusBadRequest)
 		return
 	}
+	req.Command = strings.TrimSpace(req.Command)
 
 	if err := validate.Struct(req); err != nil {
-		writeJSONError(w, fmt.Sprintf("Invalid request: %s", err.Error()), http.StatusBadRequest)
+		writeJSONError(w, validationErrorMessage(err), http.StatusBadRequest)
 		return
 	}
-
-	// validate priority is one of enum
-	// validate command is not empty and within char limits
 
 	cmdId := uuid.New()
 
@@ -175,6 +212,10 @@ func (c *CommandStorage) PatchCommand(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, "Invalid JSON body", http.StatusBadRequest)
 		return
 	}
+	if err := validate.Struct(req); err != nil {
+		writeJSONError(w, validationErrorMessage(err), http.StatusBadRequest)
+		return
+	}
 
 	idStr := r.PathValue("id")
 	id, err := uuid.Parse(idStr)
@@ -197,7 +238,7 @@ func (c *CommandStorage) PatchCommand(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !found {
-		writeJSONError(w, fmt.Sprintf("Invalid state transition: %s -> %s", cmd.Status, req.Status), http.StatusBadRequest)
+		writeJSONError(w, "invalid state transition", http.StatusBadRequest)
 		return
 	}
 
