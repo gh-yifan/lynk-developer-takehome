@@ -19,6 +19,10 @@ jobs:
         with:
           go-version-file: go/go.mod
 
+      - name: Run Go race tests
+        run: go test -race -count=1 ./...
+        working-directory: go
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
