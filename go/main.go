@@ -247,8 +247,14 @@ func (c *CommandStorage) PatchCommand(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req CommandReqPatch
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSONError(w, "Invalid JSON body", http.StatusBadRequest)
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
+		message := "Invalid JSON body"
+		if strings.HasPrefix(err.Error(), "json: unknown field ") {
+			message = "only status is allowed"
+		}
+		writeJSONError(w, message, http.StatusBadRequest)
 		return
 	}
 	if err := validate.Struct(req); err != nil {
