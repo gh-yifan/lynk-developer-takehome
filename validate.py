@@ -87,10 +87,19 @@ class ServerManager:
             print(f"{Colors.RED}Failed to start server: {e}{Colors.END}")
             return False
 
-    def _wait_for_server(self, timeout: int = 30) -> bool:
+    def _wait_for_server(self, timeout: int = 90) -> bool:
         """Wait for server to be ready."""
         start = time.time()
         while time.time() - start < timeout:
+            if self.process.poll() is not None:
+                stdout, stderr = self.process.communicate()
+                print(f"{Colors.RED}Server process exited with code {self.process.returncode}.{Colors.END}")
+                if stdout:
+                    print(stdout.decode(errors="replace"))
+                if stderr:
+                    print(stderr.decode(errors="replace"))
+                return False
+
             try:
                 response = requests.get(f"{BASE_URL}/commands", timeout=1)
                 print(f"{Colors.GREEN}Server is ready!{Colors.END}")
@@ -99,6 +108,16 @@ class ServerManager:
                 time.sleep(1)
 
         print(f"{Colors.RED}Server failed to start within {timeout} seconds{Colors.END}")
+        self.process.terminate()
+        try:
+            stdout, stderr = self.process.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            self.process.kill()
+            stdout, stderr = self.process.communicate()
+        if stdout:
+            print(stdout.decode(errors="replace"))
+        if stderr:
+            print(stderr.decode(errors="replace"))
         return False
 
     def stop(self):

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -64,9 +65,13 @@ type CommandStorage struct {
 	pendingDirect map[uuid.UUID]*list.Element // Pending command ID -> element in pending queue.
 }
 
-var valid = map[Status][]Status{
+var validTransitions = map[Status][]Status{
 	StatusPending:   []Status{StatusExecuting},
 	StatusExecuting: []Status{StatusCompleted, StatusFailed},
+}
+
+func (s Status) CanTransitionTo(next Status) bool {
+	return slices.Contains(validTransitions[s], next) // nil slice for terminal states -> false
 }
 
 func newValidator() *validator.Validate {
@@ -179,8 +184,6 @@ func (c *CommandStorage) DispatchNext(w http.ResponseWriter, r *http.Request) {
 // - Assign ID, status=PENDING, timestamps
 // - Add to queue
 func (c *CommandStorage) CreateCommand(w http.ResponseWriter, r *http.Request) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
 
 	if r.Method != http.MethodPost {
 		writeJSONError(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -198,6 +201,10 @@ func (c *CommandStorage) CreateCommand(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, validationErrorMessage(err), http.StatusBadRequest)
 		return
 	}
+
+	// moved here to prevent Create from starving other operations while waiting for input
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
 	cmdId := uuid.New()
 
@@ -232,8 +239,6 @@ func writeJSONError(w http.ResponseWriter, message string, status int) {
 }
 
 func (c *CommandStorage) PatchCommand(w http.ResponseWriter, r *http.Request) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
 
 	if r.Method != http.MethodPatch {
 		writeJSONError(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -250,6 +255,9 @@ func (c *CommandStorage) PatchCommand(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	idStr := r.PathValue("id")
 	id, err := uuid.Parse(idStr)
 	elem, ok := c.direct[id]
@@ -260,17 +268,7 @@ func (c *CommandStorage) PatchCommand(w http.ResponseWriter, r *http.Request) {
 
 	cmd := elem.Value.(*Command)
 	// validate state transition
-	var found bool
-	if acceptable, ok := valid[cmd.Status]; ok {
-		for _, s := range acceptable {
-			if req.Status == s {
-				// is in the accepted range
-				found = true
-			}
-		}
-	}
-
-	if !found {
+	if !cmd.Status.CanTransitionTo(req.Status) {
 		writeJSONError(w, "invalid state transition", http.StatusBadRequest)
 		return
 	}
