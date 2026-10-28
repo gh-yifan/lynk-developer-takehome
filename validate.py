@@ -20,6 +20,7 @@ from threading import Barrier
 from typing import Dict, List, Optional, Tuple
 import os
 import signal
+import uuid
 
 BASE_URL = "http://localhost:8080"
 
@@ -195,6 +196,31 @@ def test_create_command_max_length(runner: TestRunner):
         assert "error" in data, "Error response should contain 'error' field"
 
     runner.test("Reject command text >198 characters", test)
+
+def test_command_validation_boundaries(runner: TestRunner):
+    """Whitespace is trimmed and the 198-character boundary is accepted."""
+    def test():
+        response = requests.post(
+            f"{BASE_URL}/commands",
+            json={"command": " " + ("x" * 198) + " ", "priority": "HIGH"}
+        )
+        assert response.status_code == 201, f"Expected 201 for trimmed 198-character command, got {response.status_code}"
+        command = response.json()["command"]["command"]
+        assert command == "x" * 198, "Command should be trimmed and retain exactly 198 characters"
+
+        response = requests.post(
+            f"{BASE_URL}/commands",
+            json={"command": " \t\n ", "priority": "HIGH"}
+        )
+        assert response.status_code == 400, f"Expected 400 for whitespace-only command, got {response.status_code}"
+
+        response = requests.post(
+            f"{BASE_URL}/commands",
+            json={"command": "invalid priority", "priority": "URGENT"}
+        )
+        assert response.status_code == 400, f"Expected 400 for invalid priority, got {response.status_code}"
+
+    runner.test("Extra: command validation boundaries", test)
 
 def test_priority_ordering(runner: TestRunner):
     """Test that commands are returned in priority order."""
@@ -413,10 +439,12 @@ def test_competing_terminal_transitions(runner: TestRunner):
 def test_delete_queue_positions(runner: TestRunner):
     """Deleting first, middle, and last entries preserves FIFO order."""
     def test():
+        run_id = uuid.uuid4().hex
         for target_index in (0, 2, 3):
             created = []
             for i in range(4):
-                response = requests.post(f"{BASE_URL}/commands", json={"command": f"delete-{target_index}-{i}", "priority": "MEDIUM"})
+                command_text = f"delete-{run_id}-{target_index}-{i}"
+                response = requests.post(f"{BASE_URL}/commands", json={"command": command_text, "priority": "MEDIUM"})
                 assert response.status_code == 201, f"Expected 201, got {response.status_code}"
                 created.append(response.json()["command"])
 
@@ -424,7 +452,7 @@ def test_delete_queue_positions(runner: TestRunner):
             response = requests.delete(f"{BASE_URL}/commands/{target['id']}")
             assert response.status_code == 200, f"Delete returned {response.status_code}"
             response = requests.get(f"{BASE_URL}/commands")
-            remaining = [cmd["id"] for cmd in response.json()["commands"] if cmd.get("command", "").startswith(f"delete-{target_index}-")]
+            remaining = [cmd["id"] for cmd in response.json()["commands"] if cmd.get("command", "").startswith(f"delete-{run_id}-{target_index}-")]
             expected = [cmd["id"] for i, cmd in enumerate(created) if i != target_index]
             assert remaining == expected, f"FIFO after deleting position {target_index}: got {remaining}, want {expected}"
 
@@ -434,9 +462,10 @@ def test_concurrent_creates(runner: TestRunner):
     """Concurrent POSTs must all be retained; Go runs with the race detector."""
     def test():
         count = 32
+        run_id = uuid.uuid4().hex
 
         def create(index):
-            return requests.post(f"{BASE_URL}/commands", json={"command": f"concurrent-create-{index}", "priority": "LOW"}, timeout=10)
+            return requests.post(f"{BASE_URL}/commands", json={"command": f"concurrent-create-{run_id}-{index}", "priority": "LOW"}, timeout=10)
 
         with ThreadPoolExecutor(max_workers=count) as executor:
             responses = list(executor.map(create, range(count)))
@@ -445,12 +474,63 @@ def test_concurrent_creates(runner: TestRunner):
 
         response = requests.get(f"{BASE_URL}/commands")
         assert response.status_code == 200, f"Expected 200, got {response.status_code}"
-        commands = [cmd for cmd in response.json()["commands"] if cmd.get("command", "").startswith("concurrent-create-")]
+        commands = [cmd for cmd in response.json()["commands"] if cmd.get("command", "").startswith(f"concurrent-create-{run_id}-")]
         assert len(commands) == count, f"Retained {len(commands)} of {count} concurrent creates"
         ids = [cmd["id"] for cmd in commands]
         assert len(set(ids)) == count, "Concurrent creates produced duplicate IDs"
 
     runner.test("Extra: concurrent command creation", test)
+
+def test_rejected_transitions_preserve_status(runner: TestRunner):
+    """Invalid transitions must fail without changing the stored status."""
+    def test():
+        cases = [
+            ("pending-to-failed", "PENDING", "FAILED"),
+            ("executing-to-pending", "EXECUTING", "PENDING"),
+            ("completed-is-terminal", "COMPLETED", "FAILED"),
+            ("failed-is-terminal", "FAILED", "COMPLETED"),
+        ]
+
+        for label, initial_status, requested_status in cases:
+            response = requests.post(
+                f"{BASE_URL}/commands",
+                json={"command": f"transition-regression-{label}", "priority": "MEDIUM"}
+            )
+            assert response.status_code == 201, f"Create failed for {label}: {response.status_code}"
+            command = response.json()["command"]
+            command_id = command["id"]
+
+            if initial_status != "PENDING":
+                response = requests.patch(
+                    f"{BASE_URL}/commands/{command_id}/status",
+                    json={"status": "EXECUTING"}
+                )
+                assert response.status_code == 200, f"Could not enter EXECUTING for {label}: {response.status_code}"
+            if initial_status in ("COMPLETED", "FAILED"):
+                response = requests.patch(
+                    f"{BASE_URL}/commands/{command_id}/status",
+                    json={"status": initial_status}
+                )
+                assert response.status_code == 200, f"Could not enter {initial_status} for {label}: {response.status_code}"
+
+            response = requests.patch(
+                f"{BASE_URL}/commands/{command_id}/status",
+                json={"status": requested_status}
+            )
+            assert response.status_code == 400, f"Expected 400 for {label}, got {response.status_code}"
+
+            response = requests.get(f"{BASE_URL}/commands")
+            assert response.status_code == 200, f"GET after rejected transition returned {response.status_code}"
+            stored = next(
+                (item for item in response.json()["commands"] if item["id"] == command_id),
+                None,
+            )
+            assert stored is not None, f"Command missing after rejected transition: {label}"
+            assert stored["status"] == initial_status, (
+                f"Rejected transition {label} changed status to {stored['status']}"
+            )
+
+    runner.test("Extra: rejected transitions preserve status", test)
 
 def main():
     if len(sys.argv) != 2:
@@ -483,6 +563,7 @@ def main():
         test_create_command_high_priority(runner)
         test_create_command_validation(runner)
         test_create_command_max_length(runner)
+        test_command_validation_boundaries(runner)
         test_priority_ordering(runner)
         test_fifo_within_priority(runner)
         test_valid_state_transition(runner)
@@ -497,6 +578,7 @@ def main():
         test_competing_terminal_transitions(runner)
         test_delete_queue_positions(runner)
         test_concurrent_creates(runner)
+        test_rejected_transitions_preserve_status(runner)
 
         runner.report()
 

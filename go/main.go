@@ -57,9 +57,11 @@ type Command struct {
 }
 
 type CommandStorage struct {
-	mu     sync.RWMutex
-	queue  map[Priority]*list.List     // 3 keys with growing list, points to the command in the direct map
-	direct map[uuid.UUID]*list.Element // command id -> pointer to command
+	mu            sync.RWMutex
+	queue         map[Priority]*list.List     // All commands, retained for ordered listing.
+	pending       map[Priority]*list.List     // Dispatch-ready commands only.
+	direct        map[uuid.UUID]*list.Element // Command ID -> element in queue.
+	pendingDirect map[uuid.UUID]*list.Element // Pending command ID -> element in pending queue.
 }
 
 var valid = map[Status][]Status{
@@ -139,6 +141,35 @@ func (c *CommandStorage) GetCommands(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
+// DispatchNext handles POST /commands/dispatch and starts the next pending command.
+func (c *CommandStorage) DispatchNext(w http.ResponseWriter, r *http.Request) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if r.Method != http.MethodPost {
+		writeJSONError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	for _, priority := range []Priority{PriorityHigh, PriorityMedium, PriorityLow} {
+		element := c.pending[priority].Front()
+		if element == nil {
+			continue
+		}
+
+		cmd := element.Value.(*Command)
+		c.pending[priority].Remove(element)
+		delete(c.pendingDirect, cmd.Id)
+		cmd.Status = StatusExecuting
+		cmd.UpdatedAt = time.Now()
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{"command": cmd})
+		return
+	}
+
+	writeJSONError(w, "No pending commands", http.StatusNotFound)
+}
+
 // CreateCommand handles POST /commands
 // Create a new command in the queue.
 //
@@ -181,6 +212,8 @@ func (c *CommandStorage) CreateCommand(w http.ResponseWriter, r *http.Request) {
 
 	element := c.queue[req.Priority].PushBack(cmd)
 	c.direct[cmdId] = element
+	pendingElement := c.pending[req.Priority].PushBack(cmd)
+	c.pendingDirect[cmdId] = pendingElement
 
 	// TODO: Implement command creation
 	response := map[string]interface{}{
@@ -241,6 +274,10 @@ func (c *CommandStorage) PatchCommand(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, "invalid state transition", http.StatusBadRequest)
 		return
 	}
+	if cmd.Status == StatusPending && req.Status == StatusExecuting {
+		c.pending[cmd.Priority].Remove(c.pendingDirect[id])
+		delete(c.pendingDirect, id)
+	}
 
 	cmd.Status = req.Status
 	cmd.UpdatedAt = time.Now()
@@ -272,6 +309,10 @@ func (c *CommandStorage) DeleteCommand(w http.ResponseWriter, r *http.Request) {
 	cmd := elem.Value.(*Command)
 	// remove the command from the priority queue while maintaining FIFO order
 	c.queue[cmd.Priority].Remove(elem) // list isn't a container itself, just the pointers for all nodes that belong to it
+	if cmd.Status == StatusPending {
+		c.pending[cmd.Priority].Remove(c.pendingDirect[id])
+		delete(c.pendingDirect, id)
+	}
 
 	delete(c.direct, id)
 
@@ -290,16 +331,22 @@ func (c *CommandStorage) DeleteCommand(w http.ResponseWriter, r *http.Request) {
 
 func main() {
 	storage := &CommandStorage{
-		queue:  make(map[Priority]*list.List),
-		direct: make(map[uuid.UUID]*list.Element),
+		queue:         make(map[Priority]*list.List),
+		pending:       make(map[Priority]*list.List),
+		direct:        make(map[uuid.UUID]*list.Element),
+		pendingDirect: make(map[uuid.UUID]*list.Element),
 	}
 	storage.queue[PriorityHigh] = list.New()
 	storage.queue[PriorityMedium] = list.New()
 	storage.queue[PriorityLow] = list.New()
+	storage.pending[PriorityHigh] = list.New()
+	storage.pending[PriorityMedium] = list.New()
+	storage.pending[PriorityLow] = list.New()
 
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /commands", storage.GetCommands)
+	mux.HandleFunc("POST /commands/dispatch", storage.DispatchNext)
 	mux.HandleFunc("POST /commands", storage.CreateCommand)
 	mux.HandleFunc("PATCH /commands/{id}/status", storage.PatchCommand)
 	mux.HandleFunc("DELETE /commands/{id}", storage.DeleteCommand)
