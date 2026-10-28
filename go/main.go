@@ -6,14 +6,17 @@
 package main
 
 import (
+	"container/list"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/go-playground/validator/v10"
+	"github.com/go-playground/validator/v10/non-standard/validators"
 	"github.com/google/uuid"
 )
 
@@ -35,7 +38,7 @@ const (
 type Status string
 
 type CommandReqPost struct {
-	Command  string   `json:"command" validate:"required,min=1,max=198"`
+	Command  string   `json:"command" validate:"notblank,max=198"`
 	Priority Priority `json:"priority" validate:"required,oneof=HIGH MEDIUM LOW"`
 }
 
@@ -55,8 +58,8 @@ type Command struct {
 
 type CommandStorage struct {
 	mu     sync.RWMutex
-	queue  map[Priority][]*Command // 3 keys with growing list, points to the command in the direct map
-	direct map[uuid.UUID]*Command  // command id -> pointer to command
+	queue  map[Priority]*list.List     // 3 keys with growing list, points to the command in the direct map
+	direct map[uuid.UUID]*list.Element // command id -> pointer to command
 }
 
 var valid = map[Status][]Status{
@@ -64,7 +67,44 @@ var valid = map[Status][]Status{
 	StatusExecuting: []Status{StatusCompleted, StatusFailed},
 }
 
-var validate = validator.New()
+func newValidator() *validator.Validate {
+	validate := validator.New()
+	if err := validate.RegisterValidation("notblank", validators.NotBlank); err != nil {
+		panic(err)
+	}
+	return validate
+}
+
+var validate = newValidator()
+
+func validationErrorMessage(err error) string {
+	validationErrors, ok := err.(validator.ValidationErrors)
+	if !ok || len(validationErrors) == 0 {
+		return "invalid request"
+	}
+
+	fieldError := validationErrors[0]
+	switch fieldError.StructField() {
+	case "Command":
+		switch fieldError.Tag() {
+		case "notblank":
+			return "command must not be blank"
+		case "max":
+			return "command must be at most 198 characters"
+		}
+	case "Priority":
+		if fieldError.Tag() == "required" {
+			return "priority is required"
+		}
+		return "priority must be HIGH, MEDIUM, or LOW"
+	case "Status":
+		if fieldError.Tag() == "required" {
+			return "status is required"
+		}
+		return "status must be PENDING, EXECUTING, COMPLETED, or FAILED"
+	}
+	return "invalid request"
+}
 
 // GetCommands handles GET /commands
 // Get all commands in priority order (HIGH -> MEDIUM -> LOW).
@@ -81,10 +121,15 @@ func (c *CommandStorage) GetCommands(w http.ResponseWriter, r *http.Request) {
 	}
 
 	commands := make([]*Command, 0,
-		len(c.queue[PriorityHigh])+len(c.queue[PriorityMedium])+len(c.queue[PriorityLow]))
-	commands = append(commands, c.queue[PriorityHigh]...)
-	commands = append(commands, c.queue[PriorityMedium]...)
-	commands = append(commands, c.queue[PriorityLow]...)
+		c.queue[PriorityHigh].Len()+c.queue[PriorityMedium].Len()+c.queue[PriorityLow].Len())
+	appendCommands := func(queue *list.List) {
+		for element := queue.Front(); element != nil; element = element.Next() {
+			commands = append(commands, element.Value.(*Command))
+		}
+	}
+	appendCommands(c.queue[PriorityHigh])
+	appendCommands(c.queue[PriorityMedium])
+	appendCommands(c.queue[PriorityLow])
 
 	response := map[string]interface{}{
 		"commands": commands,
@@ -116,14 +161,12 @@ func (c *CommandStorage) CreateCommand(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, "Invalid JSON body", http.StatusBadRequest)
 		return
 	}
+	req.Command = strings.TrimSpace(req.Command)
 
 	if err := validate.Struct(req); err != nil {
-		writeJSONError(w, fmt.Sprintf("Invalid request: %s", err.Error()), http.StatusBadRequest)
+		writeJSONError(w, validationErrorMessage(err), http.StatusBadRequest)
 		return
 	}
-
-	// validate priority is one of enum
-	// validate command is not empty and within char limits
 
 	cmdId := uuid.New()
 
@@ -136,8 +179,8 @@ func (c *CommandStorage) CreateCommand(w http.ResponseWriter, r *http.Request) {
 		UpdatedAt: time.Now(),
 	}
 
-	c.queue[req.Priority] = append(c.queue[req.Priority], cmd)
-	c.direct[cmdId] = cmd
+	element := c.queue[req.Priority].PushBack(cmd)
+	c.direct[cmdId] = element
 
 	// TODO: Implement command creation
 	response := map[string]interface{}{
@@ -169,15 +212,20 @@ func (c *CommandStorage) PatchCommand(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, "Invalid JSON body", http.StatusBadRequest)
 		return
 	}
+	if err := validate.Struct(req); err != nil {
+		writeJSONError(w, validationErrorMessage(err), http.StatusBadRequest)
+		return
+	}
 
 	idStr := r.PathValue("id")
 	id, err := uuid.Parse(idStr)
-	cmd, ok := c.direct[id]
+	elem, ok := c.direct[id]
 	if err != nil || !ok {
 		writeJSONError(w, "Command not found", http.StatusNotFound)
 		return
 	}
 
+	cmd := elem.Value.(*Command)
 	// validate state transition
 	var found bool
 	if acceptable, ok := valid[cmd.Status]; ok {
@@ -190,7 +238,7 @@ func (c *CommandStorage) PatchCommand(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !found {
-		writeJSONError(w, fmt.Sprintf("Invalid state transition: %s -> %s", cmd.Status, req.Status), http.StatusBadRequest)
+		writeJSONError(w, "invalid state transition", http.StatusBadRequest)
 		return
 	}
 
@@ -215,20 +263,15 @@ func (c *CommandStorage) DeleteCommand(w http.ResponseWriter, r *http.Request) {
 
 	idStr := r.PathValue("id")
 	id, err := uuid.Parse(idStr)
-	cmd, ok := c.direct[id]
+	elem, ok := c.direct[id]
 	if err != nil || !ok {
 		writeJSONError(w, "Command not found", http.StatusNotFound)
 		return
 	}
 
-	queue := c.queue[cmd.Priority] // keeps its own metadata (len)
+	cmd := elem.Value.(*Command)
 	// remove the command from the priority queue while maintaining FIFO order
-	for i, cmdPtr := range queue {
-		if cmdPtr == cmd {
-			c.queue[cmd.Priority] = append(queue[:i], queue[i+1:]...)
-			break
-		}
-	}
+	c.queue[cmd.Priority].Remove(elem) // list isn't a container itself, just the pointers for all nodes that belong to it
 
 	delete(c.direct, id)
 
@@ -247,9 +290,12 @@ func (c *CommandStorage) DeleteCommand(w http.ResponseWriter, r *http.Request) {
 
 func main() {
 	storage := &CommandStorage{
-		queue:  make(map[Priority][]*Command),
-		direct: make(map[uuid.UUID]*Command),
+		queue:  make(map[Priority]*list.List),
+		direct: make(map[uuid.UUID]*list.Element),
 	}
+	storage.queue[PriorityHigh] = list.New()
+	storage.queue[PriorityMedium] = list.New()
+	storage.queue[PriorityLow] = list.New()
 
 	mux := http.NewServeMux()
 
