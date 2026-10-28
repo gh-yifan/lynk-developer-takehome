@@ -7,6 +7,7 @@ package main
 
 import (
 	"container/list"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -322,6 +323,46 @@ func (c *CommandStorage) DeleteCommand(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
+//go:embed openapi.yaml
+var openAPISpec []byte
+
+func openAPISpecHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/yaml")
+	w.Write(openAPISpec)
+}
+
+func openAPIDocsHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	fmt.Fprint(w, `<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>Spacecraft Command Queue API</title>
+	<link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css">
+</head>
+<body>
+	<div id="swagger-ui"></div>
+	<script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+	<script>
+		SwaggerUIBundle({ url: "/openapi.yaml", dom_id: "#swagger-ui" });
+	</script>
+</body>
+</html>`)
+}
+
+func newRouter(storage *CommandStorage) *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /docs", openAPIDocsHandler)
+	mux.HandleFunc("GET /openapi.yaml", openAPISpecHandler)
+	mux.HandleFunc("GET /commands", storage.GetCommands)
+	mux.HandleFunc("POST /commands/dispatch", storage.DispatchNext)
+	mux.HandleFunc("POST /commands", storage.CreateCommand)
+	mux.HandleFunc("PATCH /commands/{id}/status", storage.PatchCommand)
+	mux.HandleFunc("DELETE /commands/{id}", storage.DeleteCommand)
+	return mux
+}
+
 // TODO: Add more handlers as needed:
 // - UpdateCommandStatus - PATCH /commands/{id}/status
 // - DeleteCommand - DELETE /commands/{id}
@@ -341,14 +382,6 @@ func main() {
 	storage.pending[PriorityMedium] = list.New()
 	storage.pending[PriorityLow] = list.New()
 
-	mux := http.NewServeMux()
-
-	mux.HandleFunc("GET /commands", storage.GetCommands)
-	mux.HandleFunc("POST /commands/dispatch", storage.DispatchNext)
-	mux.HandleFunc("POST /commands", storage.CreateCommand)
-	mux.HandleFunc("PATCH /commands/{id}/status", storage.PatchCommand)
-	mux.HandleFunc("DELETE /commands/{id}", storage.DeleteCommand)
-
 	fmt.Println("Command Queue API running on http://localhost:8080")
-	log.Fatal(http.ListenAndServe(":8080", mux))
+	log.Fatal(http.ListenAndServe(":8080", newRouter(storage)))
 }
