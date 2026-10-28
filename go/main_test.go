@@ -262,8 +262,7 @@ func TestCreateCommandValidationAndTrim(t *testing.T) {
 
 func TestGetCommandsWhileCreateBodyIsStalled(t *testing.T) {
 	storage := newTestCommandStorage()
-	bodyReader, bodyWriter := 
-  Pipe()
+	bodyReader, bodyWriter := io.Pipe()
 	defer bodyReader.Close()
 	defer bodyWriter.Close()
 
@@ -318,5 +317,5 @@ func TestGetCommandsWhileCreateBodyIsStalled(t *testing.T) {
 	}
 	if createResponse.Code != http.StatusBadRequest {
 		t.Fatalf("POST status = %d, want %d", createResponse.Code, http.StatusBadRequest)
-  }
+	}
 }
