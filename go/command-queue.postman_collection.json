@@ -1,0 +1,488 @@
+{
+  "info": {
+    "_postman_id": "5f6b72e1-9c4a-4b9e-88cb-7a8de003e208",
+    "name": "Spacecraft Command Queue API",
+    "description": "Sequential API checks for the Spacecraft Command Queue. Run against a fresh server instance: the in-memory queue has no reset endpoint, and the dispatch-order checks expect the collection's commands to be the only pending commands.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080",
+      "type": "string"
+    },
+    {
+      "key": "highCommandId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "lowCommandId",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Get OpenAPI specification",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/openapi.yaml",
+          "host": ["{{baseUrl}}"],
+          "path": ["openapi.yaml"]
+        },
+        "description": "Fetches the API contract and confirms it includes the dispatch operation."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('returns the OpenAPI document', function () {",
+              "    pm.response.to.have.status(200);",
+              "    pm.expect(pm.response.text()).to.include('/commands/dispatch:');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "List commands",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/commands",
+          "host": ["{{baseUrl}}"],
+          "path": ["commands"]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('returns the command list', function () {",
+              "    pm.response.to.have.status(200);",
+              "    const body = pm.response.json();",
+              "    pm.expect(body.commands).to.be.an('array');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Reject blank command",
+      "request": {
+        "method": "POST",
+        "header": [
+          {"key": "Content-Type", "value": "application/json"}
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"command\": \"   \",\n  \"priority\": \"LOW\"\n}",
+          "options": {"raw": {"language": "json"}}
+        },
+        "url": {
+          "raw": "{{baseUrl}}/commands",
+          "host": ["{{baseUrl}}"],
+          "path": ["commands"]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('rejects blank command text', function () {",
+              "    pm.response.to.have.status(400);",
+              "    pm.expect(pm.response.json().error).to.eql('command must not be blank');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Create LOW command",
+      "request": {
+        "method": "POST",
+        "header": [
+          {"key": "Content-Type", "value": "application/json"}
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"command\": \"postman low-priority check\",\n  \"priority\": \"LOW\"\n}",
+          "options": {"raw": {"language": "json"}}
+        },
+        "url": {
+          "raw": "{{baseUrl}}/commands",
+          "host": ["{{baseUrl}}"],
+          "path": ["commands"]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('creates a pending LOW command', function () {",
+              "    pm.response.to.have.status(201);",
+              "    const command = pm.response.json().command;",
+              "    pm.expect(command.id).to.match(/^[0-9a-f-]{36}$/i);",
+              "    pm.expect(command.priority).to.eql('LOW');",
+              "    pm.expect(command.status).to.eql('PENDING');",
+              "    pm.collectionVariables.set('lowCommandId', command.id);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Create HIGH command",
+      "request": {
+        "method": "POST",
+        "header": [
+          {"key": "Content-Type", "value": "application/json"}
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"command\": \"postman high-priority check\",\n  \"priority\": \"HIGH\"\n}",
+          "options": {"raw": {"language": "json"}}
+        },
+        "url": {
+          "raw": "{{baseUrl}}/commands",
+          "host": ["{{baseUrl}}"],
+          "path": ["commands"]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('creates a pending HIGH command', function () {",
+              "    pm.response.to.have.status(201);",
+              "    const command = pm.response.json().command;",
+              "    pm.expect(command.id).to.match(/^[0-9a-f-]{36}$/i);",
+              "    pm.expect(command.priority).to.eql('HIGH');",
+              "    pm.expect(command.status).to.eql('PENDING');",
+              "    pm.collectionVariables.set('highCommandId', command.id);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Verify priority ordering",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/commands",
+          "host": ["{{baseUrl}}"],
+          "path": ["commands"]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('lists HIGH ahead of LOW', function () {",
+              "    pm.response.to.have.status(200);",
+              "    const commands = pm.response.json().commands;",
+              "    const highIndex = commands.findIndex(function (command) { return command.id === pm.collectionVariables.get('highCommandId'); });",
+              "    const lowIndex = commands.findIndex(function (command) { return command.id === pm.collectionVariables.get('lowCommandId'); });",
+              "    pm.expect(highIndex).to.be.at.least(0);",
+              "    pm.expect(lowIndex).to.be.at.least(0);",
+              "    pm.expect(highIndex).to.be.below(lowIndex);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Dispatch next command",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/commands/dispatch",
+          "host": ["{{baseUrl}}"],
+          "path": ["commands", "dispatch"]
+        },
+        "description": "Dispatches the highest-priority pending command; this should be the HIGH command created above."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('dispatches the HIGH command as EXECUTING', function () {",
+              "    pm.response.to.have.status(200);",
+              "    const command = pm.response.json().command;",
+              "    pm.expect(command.id).to.eql(pm.collectionVariables.get('highCommandId'));",
+              "    pm.expect(command.priority).to.eql('HIGH');",
+              "    pm.expect(command.status).to.eql('EXECUTING');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Reject extra status fields",
+      "request": {
+        "method": "PATCH",
+        "header": [
+          {"key": "Content-Type", "value": "application/json"}
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"status\": \"COMPLETED\",\n  \"priority\": \"LOW\"\n}",
+          "options": {"raw": {"language": "json"}}
+        },
+        "url": {
+          "raw": "{{baseUrl}}/commands/{{highCommandId}}/status",
+          "host": ["{{baseUrl}}"],
+          "path": ["commands", "{{highCommandId}}", "status"]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('rejects additional status properties', function () {",
+              "    pm.response.to.have.status(400);",
+              "    pm.expect(pm.response.json().error).to.eql('only status is allowed');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Complete dispatched command",
+      "request": {
+        "method": "PATCH",
+        "header": [
+          {"key": "Content-Type", "value": "application/json"}
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"status\": \"COMPLETED\"\n}",
+          "options": {"raw": {"language": "json"}}
+        },
+        "url": {
+          "raw": "{{baseUrl}}/commands/{{highCommandId}}/status",
+          "host": ["{{baseUrl}}"],
+          "path": ["commands", "{{highCommandId}}", "status"]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('transitions EXECUTING to COMPLETED', function () {",
+              "    pm.response.to.have.status(200);",
+              "    pm.expect(pm.response.json().command.status).to.eql('COMPLETED');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Reject terminal status transition",
+      "request": {
+        "method": "PATCH",
+        "header": [
+          {"key": "Content-Type", "value": "application/json"}
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"status\": \"FAILED\"\n}",
+          "options": {"raw": {"language": "json"}}
+        },
+        "url": {
+          "raw": "{{baseUrl}}/commands/{{highCommandId}}/status",
+          "host": ["{{baseUrl}}"],
+          "path": ["commands", "{{highCommandId}}", "status"]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('rejects transitions out of COMPLETED', function () {",
+              "    pm.response.to.have.status(409);",
+              "    pm.expect(pm.response.json().error).to.eql('invalid state transition');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Delete completed command",
+      "request": {
+        "method": "DELETE",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/commands/{{highCommandId}}",
+          "host": ["{{baseUrl}}"],
+          "path": ["commands", "{{highCommandId}}"]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('deletes the command', function () {",
+              "    pm.response.to.have.status(200);",
+              "    pm.expect(pm.response.json().message).to.eql('Command deleted');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Dispatch next command (LOW)",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/commands/dispatch",
+          "host": ["{{baseUrl}}"],
+          "path": ["commands", "dispatch"]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('dispatches the remaining LOW command', function () {",
+              "    pm.response.to.have.status(200);",
+              "    const command = pm.response.json().command;",
+              "    pm.expect(command.id).to.eql(pm.collectionVariables.get('lowCommandId'));",
+              "    pm.expect(command.priority).to.eql('LOW');",
+              "    pm.expect(command.status).to.eql('EXECUTING');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Mark LOW command failed",
+      "request": {
+        "method": "PATCH",
+        "header": [
+          {"key": "Content-Type", "value": "application/json"}
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"status\": \"FAILED\"\n}",
+          "options": {"raw": {"language": "json"}}
+        },
+        "url": {
+          "raw": "{{baseUrl}}/commands/{{lowCommandId}}/status",
+          "host": ["{{baseUrl}}"],
+          "path": ["commands", "{{lowCommandId}}", "status"]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('transitions EXECUTING to FAILED', function () {",
+              "    pm.response.to.have.status(200);",
+              "    pm.expect(pm.response.json().command.status).to.eql('FAILED');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Delete failed command",
+      "request": {
+        "method": "DELETE",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/commands/{{lowCommandId}}",
+          "host": ["{{baseUrl}}"],
+          "path": ["commands", "{{lowCommandId}}"]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('deletes the failed command', function () {",
+              "    pm.response.to.have.status(200);",
+              "    pm.expect(pm.response.json().message).to.eql('Command deleted');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Dispatch from empty queue",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/commands/dispatch",
+          "host": ["{{baseUrl}}"],
+          "path": ["commands", "dispatch"]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('returns not found when no pending commands remain', function () {",
+              "    pm.response.to.have.status(404);",
+              "    pm.expect(pm.response.json().error).to.eql('No pending commands');",
+              "});"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}
