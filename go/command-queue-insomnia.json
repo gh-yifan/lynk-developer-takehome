@@ -1,0 +1,272 @@
+{
+  "_type": "export",
+  "__export_format": 4,
+  "__export_date": "2026-10-27T00:00:00.000Z",
+  "__export_source": "insomnia.desktop.app",
+  "resources": [
+    {
+      "_id": "wrk_command_queue",
+      "parentId": null,
+      "modified": 1793059200000,
+      "created": 1793059200000,
+      "name": "Spacecraft Command Queue API",
+      "description": "Requests for the Go command queue API.",
+      "scope": "collection",
+      "_type": "workspace"
+    },
+    {
+      "_id": "env_command_queue_base",
+      "parentId": "wrk_command_queue",
+      "modified": 1793059200000,
+      "created": 1793059200000,
+      "name": "Base Environment",
+      "data": {
+        "base_url": "http://localhost:8080",
+        "command_id": "PASTE_CREATED_COMMAND_UUID_HERE"
+      },
+      "dataPropertyOrder": {
+        "&": ["base_url", "command_id"]
+      },
+      "color": null,
+      "isPrivate": false,
+      "metaSortKey": 1,
+      "_type": "environment"
+    },
+    {
+      "_id": "reqgrp_commands",
+      "parentId": "wrk_command_queue",
+      "modified": 1793059200000,
+      "created": 1793059200000,
+      "name": "Commands",
+      "description": "Create a command, copy its returned ID into the environment, then exercise status and delete requests.",
+      "environment": {},
+      "environmentPropertyOrder": null,
+      "metaSortKey": 1,
+      "_type": "request_group"
+    },
+    {
+      "_id": "req_get_commands",
+      "parentId": "reqgrp_commands",
+      "modified": 1793059200000,
+      "created": 1793059200000,
+      "url": "{{ _.base_url }}/commands",
+      "name": "List commands",
+      "description": "Returns commands ordered by priority, then FIFO within each priority.",
+      "method": "GET",
+      "body": {},
+      "parameters": [],
+      "headers": [],
+      "authentication": {},
+      "metaSortKey": 1,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "_type": "request"
+    },
+    {
+      "_id": "req_post_high",
+      "parentId": "reqgrp_commands",
+      "modified": 1793059200000,
+      "created": 1793059200000,
+      "url": "{{ _.base_url }}/commands",
+      "name": "Create high-priority command",
+      "description": "After sending, copy response command.id into the command_id environment value.",
+      "method": "POST",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"command\": \"insomnia test high priority\",\n  \"priority\": \"HIGH\"\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 2,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "_type": "request"
+    },
+    {
+      "_id": "req_post_medium",
+      "parentId": "reqgrp_commands",
+      "modified": 1793059200000,
+      "created": 1793059200000,
+      "url": "{{ _.base_url }}/commands",
+      "name": "Create medium-priority command",
+      "description": "Optional request for checking priority ordering.",
+      "method": "POST",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"command\": \"insomnia test medium priority\",\n  \"priority\": \"MEDIUM\"\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 3,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "_type": "request"
+    },
+    {
+      "_id": "req_post_low",
+      "parentId": "reqgrp_commands",
+      "modified": 1793059200000,
+      "created": 1793059200000,
+      "url": "{{ _.base_url }}/commands",
+      "name": "Create low-priority command",
+      "description": "Optional request for checking priority ordering.",
+      "method": "POST",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"command\": \"insomnia test low priority\",\n  \"priority\": \"LOW\"\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 4,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "_type": "request"
+    },
+    {
+      "_id": "req_patch_executing",
+      "parentId": "reqgrp_commands",
+      "modified": 1793059200000,
+      "created": 1793059200000,
+      "url": "{{ _.base_url }}/commands/{{ _.command_id }}/status",
+      "name": "Set status to EXECUTING",
+      "description": "Valid transition from PENDING. Update command_id in the active environment first.",
+      "method": "PATCH",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"status\": \"EXECUTING\"\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 5,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "_type": "request"
+    },
+    {
+      "_id": "req_patch_completed",
+      "parentId": "reqgrp_commands",
+      "modified": 1793059200000,
+      "created": 1793059200000,
+      "url": "{{ _.base_url }}/commands/{{ _.command_id }}/status",
+      "name": "Set status to COMPLETED",
+      "description": "Run after EXECUTING. A command in a terminal state cannot transition again.",
+      "method": "PATCH",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"status\": \"COMPLETED\"\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 6,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "_type": "request"
+    },
+    {
+      "_id": "req_patch_failed",
+      "parentId": "reqgrp_commands",
+      "modified": 1793059200000,
+      "created": 1793059200000,
+      "url": "{{ _.base_url }}/commands/{{ _.command_id }}/status",
+      "name": "Set status to FAILED",
+      "description": "Alternative to COMPLETED: run after EXECUTING, not after COMPLETED.",
+      "method": "PATCH",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"status\": \"FAILED\"\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 7,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "_type": "request"
+    },
+    {
+      "_id": "req_delete_command",
+      "parentId": "reqgrp_commands",
+      "modified": 1793059200000,
+      "created": 1793059200000,
+      "url": "{{ _.base_url }}/commands/{{ _.command_id }}",
+      "name": "Delete command",
+      "description": "Deletes the command identified by command_id.",
+      "method": "DELETE",
+      "body": {},
+      "parameters": [],
+      "headers": [],
+      "authentication": {},
+      "metaSortKey": 8,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "_type": "request"
+    }
+  ]
+}
