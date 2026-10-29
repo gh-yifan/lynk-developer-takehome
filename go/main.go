@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -357,8 +358,17 @@ func openAPIDocsHandler(w http.ResponseWriter, r *http.Request) {
 </html>`)
 }
 
+//go:embed demo.html
+var queueDemoHTML []byte
+
+func queueDemoHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write(queueDemoHTML)
+}
+
 func newRouter(storage *CommandStorage) *http.ServeMux {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /demo", queueDemoHandler)
 	mux.HandleFunc("GET /docs", openAPIDocsHandler)
 	mux.HandleFunc("GET /openapi.yaml", openAPISpecHandler)
 	mux.HandleFunc("GET /commands", storage.GetCommands)
@@ -388,6 +398,10 @@ func main() {
 	storage.pending[PriorityMedium] = list.New()
 	storage.pending[PriorityLow] = list.New()
 
-	fmt.Println("Command Queue API running on http://localhost:8080")
-	log.Fatal(http.ListenAndServe(":8080", newRouter(storage)))
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+	fmt.Printf("Command Queue API running on http://localhost:%s\n", port)
+	log.Fatal(http.ListenAndServe(":"+port, newRouter(storage)))
 }

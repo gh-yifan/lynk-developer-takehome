@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<meta name="demo-version" content="1">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<meta name="color-scheme" content="light">
+	<title>Command Queue | Flight Operations</title>
+	<style>
+		:root {
+			font-family: "Avenir Next", Avenir, "Segoe UI", sans-serif;
+			color: #172a35;
+			background: #f1f5f2;
+			font-synthesis: none;
+			--ink: #172a35;
+			--muted: #647780;
+			--line: #d7e1dc;
+			--paper: #fffefa;
+			--green: #176f56;
+			--lime: #d6ed78;
+			--red: #b94a45;
+			--amber: #9c691d;
+		}
+		* { box-sizing: border-box; }
+		body { margin: 0; min-width: 320px; background: linear-gradient(120deg, #edf5f0 0%, #f5f4ed 52%, #edf1ed 100%); }
+		button, input, select { font: inherit; }
+		button { min-height: 38px; border: 1px solid var(--line); border-radius: 5px; background: var(--paper); color: var(--ink); padding: 8px 12px; cursor: pointer; transition: background .15s, border-color .15s, transform .15s; }
+		button:hover:not(:disabled) { border-color: #8ca79a; background: #f4f8f2; }
+		button:active:not(:disabled) { transform: translateY(1px); }
+		button:disabled { cursor: not-allowed; opacity: .48; }
+		button.primary { border-color: var(--green); background: var(--green); color: white; }
+		button.primary:hover:not(:disabled) { background: #105941; }
+		button.danger { color: var(--red); }
+		button.compact { min-height: 30px; padding: 5px 9px; font-size: 12px; }
+		.topbar { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 16px clamp(18px, 4vw, 56px); color: #eaf3ed; background: #183a37; border-bottom: 4px solid var(--lime); }
+		.brand { display: flex; align-items: center; gap: 12px; font-size: 15px; font-weight: 700; }
+		.brand-mark { display: grid; width: 35px; aspect-ratio: 1; place-items: center; border: 1px solid #79988a; border-radius: 50%; color: var(--lime); font-size: 18px; }
+		.top-meta { display: flex; align-items: center; gap: 18px; color: #c4d6ce; font-size: 12px; }
+		.connection { display: flex; align-items: center; gap: 8px; }
+		.dot { width: 8px; aspect-ratio: 1; border-radius: 50%; background: #a4d76b; box-shadow: 0 0 0 3px #a4d76b2c; }
+		main { width: min(1240px, calc(100% - 36px)); margin: 30px auto 60px; }
+		.heading { display: flex; align-items: end; justify-content: space-between; gap: 24px; margin-bottom: 23px; }
+		.eyebrow { margin: 0 0 7px; color: var(--green); font-size: 11px; font-weight: 700; text-transform: uppercase; }
+		h1 { margin: 0; font-size: clamp(26px, 4vw, 36px); line-height: 1.12; font-weight: 650; }
+		.heading p { max-width: 520px; margin: 9px 0 0; color: var(--muted); font-size: 14px; }
+		.heading-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: end; }
+		.metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin-bottom: 18px; background: var(--paper); border: 1px solid var(--line); border-radius: 7px; }
+		.metric { padding: 14px 18px; border-right: 1px solid var(--line); }
+		.metric:last-child { border-right: 0; }
+		.metric-label { color: var(--muted); font-size: 11px; text-transform: uppercase; }
+		.metric-value { margin-top: 5px; font-size: 25px; font-weight: 650; }
+		.metric-value.small { font-size: 15px; padding-top: 6px; }
+		.workspace { display: grid; grid-template-columns: minmax(0, 1fr) 310px; gap: 18px; align-items: start; }
+		.panel { overflow: hidden; background: var(--paper); border: 1px solid var(--line); border-radius: 7px; }
+		.panel + .panel { margin-top: 16px; }
+		.panel-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 17px; border-bottom: 1px solid var(--line); }
+		.panel-head h2 { margin: 0; font-size: 14px; font-weight: 700; }
+		.panel-head span { color: var(--muted); font-size: 12px; }
+		.form { display: grid; grid-template-columns: minmax(0, 1fr) 132px auto; gap: 9px; padding: 14px 17px; border-bottom: 1px solid var(--line); }
+		input, select { width: 100%; min-height: 38px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 5px; background: white; color: var(--ink); }
+		input:focus, select:focus, button:focus-visible { outline: 2px solid #278269; outline-offset: 2px; }
+		.table-wrap { overflow-x: auto; }
+		table { width: 100%; border-collapse: collapse; text-align: left; }
+		th { padding: 10px 15px; color: var(--muted); background: #f5f7f3; font-size: 10px; font-weight: 700; text-transform: uppercase; white-space: nowrap; }
+		td { padding: 12px 15px; border-top: 1px solid #e8eeea; vertical-align: middle; font-size: 12px; }
+		.command-name { min-width: 175px; font-weight: 650; font-size: 13px; }
+		.command-id { display: block; max-width: 225px; overflow: hidden; margin-top: 4px; color: #829197; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; text-overflow: ellipsis; }
+		.priority, .status { display: inline-flex; align-items: center; padding: 4px 7px; border-radius: 3px; font-size: 10px; font-weight: 700; white-space: nowrap; }
+		.priority-high { background: #fbe4dd; color: #9f4537; }
+		.priority-medium { background: #fff0c9; color: #8b671d; }
+		.priority-low { background: #e3eee9; color: #356a57; }
+		.status-pending { background: #edf1f0; color: #53656a; }
+		.status-executing { background: #dff0e8; color: #176f56; }
+		.status-completed { background: #eaf1d1; color: #536d21; }
+		.status-failed { background: #f9e3df; color: #a6413c; }
+		.row-actions { display: flex; gap: 5px; white-space: nowrap; }
+		.empty { padding: 34px 18px; color: var(--muted); text-align: center; font-size: 13px; }
+		.side-panel { padding: 16px; }
+		.side-panel h2 { margin: 0 0 5px; font-size: 14px; }
+		.side-panel > p { margin: 0 0 14px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+		.failure-actions { display: grid; gap: 8px; }
+		.failure-actions button { text-align: left; }
+		.log { max-height: 390px; overflow: auto; }
+		.log-entry { padding: 11px 14px; border-bottom: 1px solid #e8eeea; }
+		.log-entry:last-child { border-bottom: 0; }
+		.log-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+		.log-title { font-size: 11px; font-weight: 700; }
+		.log-code { color: var(--green); font: 700 10px ui-monospace, monospace; }
+		.log-code.error { color: var(--red); }
+		.log-detail { margin-top: 5px; color: var(--muted); font: 10px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+		.log-empty { padding: 18px 14px; color: var(--muted); font-size: 12px; }
+		@media (max-width: 850px) { .workspace { grid-template-columns: 1fr; } .side-column { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; } .panel + .panel { margin-top: 0; } }
+		@media (max-width: 600px) { .topbar { align-items: flex-start; padding-inline: 16px; } .top-meta { align-items: flex-end; flex-direction: column; gap: 7px; } main { width: calc(100% - 24px); margin-top: 21px; } .heading { align-items: flex-start; flex-direction: column; } .heading-actions { justify-content: start; } .metrics { grid-template-columns: repeat(2, 1fr); } .metric:nth-child(2) { border-right: 0; } .metric:nth-child(n+3) { border-top: 1px solid var(--line); } .form { grid-template-columns: 1fr 112px; } .form button { grid-column: 1 / -1; } .side-column { grid-template-columns: 1fr; } }
+	</style>
+</head>
+<body>
+	<header class="topbar">
+		<div class="brand"><span class="brand-mark" aria-hidden="true">⌁</span><span>FLIGHT OPERATIONS / COMMAND SYSTEMS</span></div>
+		<div class="top-meta"><span class="connection"><span class="dot" id="connection-dot"></span><span id="connection-label">Checking API</span></span><span>LOCAL CONTROL · <span id="clock"></span></span></div>
+	</header>
+	<main>
+		<section class="heading">
+			<div><p class="eyebrow">Queue control / live API</p><h1>Command queue</h1><p>Create commands, dispatch by priority, advance their status, and inspect the API response for each action.</p></div>
+			<div class="heading-actions"><button id="refresh-button" type="button">↻ &nbsp;Refresh queue</button><button id="sample-button" type="button">＋ &nbsp;Load sample commands</button><button class="primary" id="dispatch-button" type="button">▷ &nbsp;Dispatch next</button></div>
+		</section>
+		<section class="metrics" aria-label="Queue summary">
+			<div class="metric"><div class="metric-label">All commands</div><div class="metric-value" id="count-all">0</div></div>
+			<div class="metric"><div class="metric-label">Pending</div><div class="metric-value" id="count-pending">0</div></div>
+			<div class="metric"><div class="metric-label">Executing</div><div class="metric-value" id="count-executing">0</div></div>
+			<div class="metric"><div class="metric-label">Dispatch order</div><div class="metric-value small">HIGH → MEDIUM → LOW</div></div>
+		</section>
+		<div class="workspace">
+			<div>
+				<section class="panel">
+					<div class="panel-head"><h2>Queue contents</h2><span id="queue-updated">Loading…</span></div>
+					<form class="form" id="create-form">
+						<input id="command-input" name="command" maxlength="220" placeholder="e.g. Stabilize spacecraft attitude" aria-label="Command text">
+						<select id="priority-input" name="priority" aria-label="Priority"><option>HIGH</option><option>MEDIUM</option><option>LOW</option></select>
+						<button class="primary" type="submit">＋ &nbsp;Create command</button>
+					</form>
+					<div class="table-wrap"><table><thead><tr><th>Command</th><th>Priority</th><th>Status</th><th>Actions</th></tr></thead><tbody id="command-rows"></tbody></table><div class="empty" id="empty-state" hidden>No commands yet. Create one or add sample commands to begin.</div></div>
+				</section>
+			</div>
+			<aside class="side-column">
+				<section class="panel side-panel">
+					<h2>Exercise failure modes</h2><p>These actions call the API with intentionally invalid inputs. Expected failures are shown in the activity log.</p>
+					<div class="failure-actions"><button type="button" id="blank-test">Try blank command <span class="log-code">400</span></button><button type="button" id="priority-test">Try invalid priority <span class="log-code">400</span></button><button type="button" id="field-test">Try extra status field <span class="log-code">400</span></button><button type="button" id="transition-test">Try invalid transition <span class="log-code">409</span></button><button type="button" id="missing-test">Try unknown command ID <span class="log-code">404</span></button></div>
+				</section>
+				<section class="panel">
+					<div class="panel-head"><h2>Activity</h2><button class="compact" type="button" id="clear-log">Clear</button></div>
+					<div class="log" id="activity-log"><div class="log-empty" id="log-empty">API requests and responses will appear here.</div></div>
+				</section>
+			</aside>
+		</div>
+	</main>
+	<script>
+		const byId = (id) => document.getElementById(id);
+		const priorityRank = { HIGH: 0, MEDIUM: 1, LOW: 2 };
+		let commands = [];
+
+		byId("clock").textContent = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" }).format(new Date());
+
+		function log(label, method, path, status, body) {
+			const empty = byId("log-empty");
+			if (empty) empty.remove();
+			const entry = document.createElement("div");
+			entry.className = "log-entry";
+			const top = document.createElement("div");
+			top.className = "log-top";
+			const title = document.createElement("span");
+			title.className = "log-title";
+			title.textContent = label;
+			const code = document.createElement("span");
+			code.className = `log-code${status >= 400 ? " error" : ""}`;
+			code.textContent = `${method} · ${status}`;
+			const detail = document.createElement("div");
+			detail.className = "log-detail";
+			detail.textContent = `${path}  ${JSON.stringify(body)}`;
+			top.append(title, code);
+			entry.append(top, detail);
+			byId("activity-log").prepend(entry);
+		}
+
+		async function api(label, method, path, payload) {
+			const options = { method, headers: {} };
+			if (payload !== undefined) {
+				options.headers["Content-Type"] = "application/json";
+				options.body = JSON.stringify(payload);
+			}
+			try {
+				const response = await fetch(path, options);
+				const text = await response.text();
+				let body;
+				try { body = text ? JSON.parse(text) : {}; } catch { body = text; }
+				log(label, method, path, response.status, body);
+				return { ok: response.ok, status: response.status, body };
+			} catch (error) {
+				log(label, method, path, 0, { error: error.message });
+				byId("connection-label").textContent = "API unavailable";
+				byId("connection-dot").style.background = "#d16b62";
+				return { ok: false, status: 0, body: { error: error.message } };
+			}
+		}
+
+		function addActionButton(cell, label, action, danger = false) {
+			const button = document.createElement("button");
+			button.type = "button";
+			button.className = `compact${danger ? " danger" : ""}`;
+			button.textContent = label;
+			button.addEventListener("click", action);
+			cell.append(button);
+		}
+
+		function renderQueue() {
+			const body = byId("command-rows");
+			body.replaceChildren();
+			const sorted = [...commands].sort((a, b) => priorityRank[a.priority] - priorityRank[b.priority]);
+			byId("empty-state").hidden = sorted.length !== 0;
+			for (const command of sorted) {
+				const row = document.createElement("tr");
+				const nameCell = row.insertCell();
+				const name = document.createElement("div");
+				name.className = "command-name";
+				name.textContent = command.command;
+				const id = document.createElement("span");
+				id.className = "command-id";
+				id.textContent = command.id;
+				nameCell.append(name, id);
+				const priorityCell = row.insertCell();
+				const priority = document.createElement("span");
+				priority.className = `priority priority-${command.priority.toLowerCase()}`;
+				priority.textContent = command.priority;
+				priorityCell.append(priority);
+				const statusCell = row.insertCell();
+				const status = document.createElement("span");
+				status.className = `status status-${command.status.toLowerCase()}`;
+				status.textContent = command.status;
+				statusCell.append(status);
+				const actions = row.insertCell();
+				actions.className = "row-actions";
+				if (command.status === "PENDING") addActionButton(actions, "Start", () => changeStatus(command, "EXECUTING"));
+				if (command.status === "EXECUTING") {
+					addActionButton(actions, "Complete", () => changeStatus(command, "COMPLETED"));
+					addActionButton(actions, "Fail", () => changeStatus(command, "FAILED"), true);
+				}
+				addActionButton(actions, "Delete", () => deleteCommand(command), true);
+				body.append(row);
+			}
+			byId("count-all").textContent = String(commands.length);
+			byId("count-pending").textContent = String(commands.filter((command) => command.status === "PENDING").length);
+			byId("count-executing").textContent = String(commands.filter((command) => command.status === "EXECUTING").length);
+			byId("queue-updated").textContent = `Updated ${new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date())}`;
+			byId("field-test").disabled = commands.length === 0;
+			byId("transition-test").disabled = commands.length === 0;
+		}
+
+		async function refreshQueue() {
+			const result = await api("Refresh queue", "GET", "/commands");
+			if (!result.ok) return;
+			commands = result.body.commands || [];
+			byId("connection-label").textContent = "API connected";
+			byId("connection-dot").style.background = "#a4d76b";
+			renderQueue();
+		}
+
+		async function createCommand(command, priority, label = "Create command") {
+			const result = await api(label, "POST", "/commands", { command, priority });
+			if (result.ok) await refreshQueue();
+			return result;
+		}
+
+		async function changeStatus(command, status) {
+			const result = await api(`${status} command`, "PATCH", `/commands/${command.id}/status`, { status });
+			if (result.ok) await refreshQueue();
+		}
+
+		async function deleteCommand(command) {
+			const result = await api("Delete command", "DELETE", `/commands/${command.id}`);
+			if (result.ok) await refreshQueue();
+		}
+
+		byId("create-form").addEventListener("submit", async (event) => {
+			event.preventDefault();
+			const result = await createCommand(byId("command-input").value, byId("priority-input").value);
+			if (result.ok) byId("command-input").value = "";
+		});
+		byId("refresh-button").addEventListener("click", refreshQueue);
+		byId("sample-button").addEventListener("click", async () => {
+			const button = byId("sample-button");
+			button.disabled = true;
+			try {
+				await createCommand("Sample: stabilize spacecraft attitude", "HIGH", "Load sample: HIGH priority");
+				await createCommand("Sample: run system diagnostics", "MEDIUM", "Load sample: MEDIUM priority");
+				await createCommand("Sample: capture telemetry", "LOW", "Load sample: LOW priority");
+			} finally {
+				button.disabled = false;
+			}
+		});
+		byId("dispatch-button").addEventListener("click", async () => {
+			const result = await api("Dispatch next pending command", "POST", "/commands/dispatch");
+			if (result.ok) await refreshQueue();
+		});
+		byId("blank-test").addEventListener("click", () => createCommand("   ", "LOW", "Failure test: blank command (expect 400)"));
+		byId("priority-test").addEventListener("click", () => createCommand("Invalid priority probe", "URGENT", "Failure test: invalid priority (expect 400)"));
+		byId("field-test").addEventListener("click", async () => {
+			const command = commands[0];
+			if (command) await api("Failure test: additional status field (expect 400)", "PATCH", `/commands/${command.id}/status`, { status: "EXECUTING", priority: "LOW" });
+		});
+		byId("transition-test").addEventListener("click", async () => {
+			const command = commands[0];
+			if (command) await api("Failure test: invalid state transition (expect 409)", "PATCH", `/commands/${command.id}/status`, { status: command.status === "PENDING" ? "COMPLETED" : "EXECUTING" });
+		});
+		byId("missing-test").addEventListener("click", () => api("Failure test: unknown command ID (expect 404)", "DELETE", "/commands/not-a-uuid"));
+		byId("clear-log").addEventListener("click", () => {
+			byId("activity-log").replaceChildren();
+			const empty = document.createElement("div");
+			empty.className = "log-empty";
+			empty.id = "log-empty";
+			empty.textContent = "API requests and responses will appear here.";
+			byId("activity-log").append(empty);
+		});
+
+		refreshQueue();
+	</script>
+</body>
+</html>

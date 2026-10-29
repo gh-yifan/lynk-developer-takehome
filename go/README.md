@@ -26,6 +26,12 @@ This scaffold uses the standard library `net/http` package for the REST API.
    curl http://localhost:8080/commands
    ```
 
+## Interactive Docs and Queue Walkthrough
+
+- Open `http://localhost:8080/demo` for the interactive queue UI, or `http://localhost:8080/docs` for Swagger UI.
+- Run `bash ./demo.sh` in this directory to open the interactive queue UI. Use the controls to load sample commands, create commands, dispatch the next pending item, advance commands to completed or failed, delete them, and trigger representative API failures. Requests and responses appear in the activity panel. If an older API is occupying port 8080, the script starts the updated server on the first available port from 8081 through 8090.
+- Run `make demo` from this directory to open the interactive UI; `make run` is an alias. Use `make deploy` to run the API in the foreground without opening a browser.
+
 ## Running Validation
 
 From the parent directory:

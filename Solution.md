@@ -48,3 +48,14 @@ delete at beginning, middle, and end - ensure FIFO order is preserved
 GET after PATCH - ensure the updated status and updated_at timestamp are reflected
 race-enabled tests cover competing status transitions and concurrent command creation
 API regression tests cover command validation boundaries and rejected transitions preserving status
+
+# how to run
+deploy server: `make deploy`
+test the server: `make test`
+demo UI to exercise the server: `make run` 
+
+demo UI is available at localhost:8081/demo
+open api spec is available at localhost:8080/docs
+
+[Demo](https://github.com/user-attachments/assets/74ef10ad-6d64-483d-8e04-de08908f9d13)
+
