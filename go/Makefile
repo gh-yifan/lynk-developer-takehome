@@ -1,40 +1,39 @@
 SHELL := /bin/sh
 PYTHON ?= python3
-PORT ?= 8080
 
 LABEL ?= baseline
-SIZES ?= 0 1000 5000
+QUEUE_SIZE ?= 20000
 RESULTS_DIR ?= perf/results/$(LABEL)
-API_ADDR ?= 127.0.0.1:18080
+API_ADDR ?= 127.0.0.1:8080
 THROUGHPUT_VUS ?= 20
 THROUGHPUT_DURATION ?= 60s
-MEMORY_QUEUE_SIZE ?= 10000
+PROFILE_TARGET ?= ../lynk-main/go
 CPU_SECONDS ?= 60
 MEMORY_K6_PROFILE ?= profile
 PPROF_ADDR ?= 127.0.0.1:6060
-PROFILE_ROOT ?= perf/profiles/make-$(LABEL)-$(shell date +%Y%m%d-%H%M%S)
+PROFILE_ROOT ?= perf/profiles/$(LABEL)
+K6_PROFILE ?= throughput
 
-.PHONY: test go-test deploy demo teardown run
+.PHONY: all benchmark memory
 
-deploy:
-	go run main.go storage.go
+all: benchmark memory
 
-teardown:
-	@pids=$$(lsof -tiTCP:$(PORT) -sTCP:LISTEN 2>/dev/null); \
-	if [ -n "$$pids" ]; then \
-		echo "Stopping listener(s) on port $(PORT): $$pids"; \
-		kill $$pids; \
-	else \
-		echo "No listener on port $(PORT)"; \
-	fi
+benchmark:
+	API_ADDR="$(API_ADDR)" RESULTS_DIR="$(RESULTS_DIR)" K6_PROFILE="$(K6_PROFILE)" \
+		THROUGHPUT_VUS="$(THROUGHPUT_VUS)" THROUGHPUT_DURATION="$(THROUGHPUT_DURATION)" \
+		./perf/run_queue_sizes.sh "$(QUEUE_SIZE)"
+	python3 perf/plot_results.py \
+		--run "$(LABEL):$(QUEUE_SIZE)=$(RESULTS_DIR)/results-$(QUEUE_SIZE).ndjson" \
+		--output "$(RESULTS_DIR)/latency.svg"
+	python3 perf/plot_throughput.py \
+		--run "$(LABEL):$(QUEUE_SIZE)=$(RESULTS_DIR)/summary-$(QUEUE_SIZE).json" \
+		--output "$(RESULTS_DIR)/throughput.svg"
 
-demo:
-	bash ./demo.sh
-
-run: demo
-
-go-test:
-	go test ./...
-
-test: go-test
-	cd .. && $(PYTHON) validate.py go
+memory:
+	TARGET_GO_DIR="$(PROFILE_TARGET)" API_ADDR="$(API_ADDR)" PORT="$${PORT:-8080}" \
+		PPROF_ADDR="$(PPROF_ADDR)" CPU_SECONDS="$(CPU_SECONDS)" \
+		K6_PROFILE="$(MEMORY_K6_PROFILE)" ./perf/profile_memory.sh "$(QUEUE_SIZE)" "$(LABEL)" "$(PROFILE_ROOT)"
+	@set --; for profile in "$(PROFILE_ROOT)"/$(LABEL)-$(QUEUE_SIZE)-*; do \
+		test -d "$$profile" && set -- "$$@" --run "$(LABEL):$(QUEUE_SIZE)=$$profile"; \
+	done; \
+		test "$$#" -gt 0 && python3 perf/plot_memory.py "$$@" --output "$(PROFILE_ROOT)/memory.svg"
