@@ -6,7 +6,6 @@
 package main
 
 import (
-	"container/list"
 	_ "embed"
 	"encoding/json"
 	"fmt"
@@ -60,11 +59,10 @@ type Command struct {
 }
 
 type CommandStorage struct {
-	mu            sync.RWMutex
-	queue         map[Priority]*list.List     // All commands, retained for ordered listing.
-	pending       map[Priority]*list.List     // Dispatch-ready commands only.
-	direct        map[uuid.UUID]*list.Element // Command ID -> element in queue.
-	pendingDirect map[uuid.UUID]*list.Element // Pending command ID -> element in pending queue.
+	mu      sync.RWMutex
+	queue   map[Priority][]*Command // All commands, retained for ordered listing.
+	pending map[Priority][]*Command // Dispatch-ready commands only.
+	direct  map[uuid.UUID]*Command  // Command ID -> command for direct lookup.
 }
 
 var validTransitions = map[Status][]Status{
@@ -130,15 +128,10 @@ func (c *CommandStorage) GetCommands(w http.ResponseWriter, r *http.Request) {
 	}
 
 	commands := make([]*Command, 0,
-		c.queue[PriorityHigh].Len()+c.queue[PriorityMedium].Len()+c.queue[PriorityLow].Len())
-	appendCommands := func(queue *list.List) {
-		for element := queue.Front(); element != nil; element = element.Next() {
-			commands = append(commands, element.Value.(*Command))
-		}
-	}
-	appendCommands(c.queue[PriorityHigh])
-	appendCommands(c.queue[PriorityMedium])
-	appendCommands(c.queue[PriorityLow])
+		len(c.queue[PriorityHigh])+len(c.queue[PriorityMedium])+len(c.queue[PriorityLow]))
+	commands = append(commands, c.queue[PriorityHigh]...)
+	commands = append(commands, c.queue[PriorityMedium]...)
+	commands = append(commands, c.queue[PriorityLow]...)
 
 	response := map[string]interface{}{
 		"commands": commands,
@@ -159,14 +152,13 @@ func (c *CommandStorage) DispatchNext(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for _, priority := range []Priority{PriorityHigh, PriorityMedium, PriorityLow} {
-		element := c.pending[priority].Front()
-		if element == nil {
+		pending := c.pending[priority]
+		if len(pending) == 0 {
 			continue
 		}
 
-		cmd := element.Value.(*Command)
-		c.pending[priority].Remove(element)
-		delete(c.pendingDirect, cmd.Id)
+		cmd := pending[0]
+		c.pending[priority] = slices.Delete(pending, 0, 1)
 		cmd.Status = StatusExecuting
 		cmd.UpdatedAt = time.Now()
 		w.Header().Set("Content-Type", "application/json")
@@ -219,10 +211,9 @@ func (c *CommandStorage) CreateCommand(w http.ResponseWriter, r *http.Request) {
 		UpdatedAt: time.Now(),
 	}
 
-	element := c.queue[req.Priority].PushBack(cmd)
-	c.direct[cmdId] = element
-	pendingElement := c.pending[req.Priority].PushBack(cmd)
-	c.pendingDirect[cmdId] = pendingElement
+	c.queue[req.Priority] = append(c.queue[req.Priority], cmd)
+	c.direct[cmdId] = cmd
+	c.pending[req.Priority] = append(c.pending[req.Priority], cmd)
 
 	// TODO: Implement command creation
 	response := map[string]interface{}{
@@ -268,21 +259,19 @@ func (c *CommandStorage) PatchCommand(w http.ResponseWriter, r *http.Request) {
 
 	idStr := r.PathValue("id")
 	id, err := uuid.Parse(idStr)
-	elem, ok := c.direct[id]
+	cmd, ok := c.direct[id]
 	if err != nil || !ok {
 		writeJSONError(w, "Command not found", http.StatusNotFound)
 		return
 	}
 
-	cmd := elem.Value.(*Command)
 	// validate state transition
 	if !cmd.Status.CanTransitionTo(req.Status) {
 		writeJSONError(w, "invalid state transition", http.StatusConflict)
 		return
 	}
 	if cmd.Status == StatusPending && req.Status == StatusExecuting {
-		c.pending[cmd.Priority].Remove(c.pendingDirect[id])
-		delete(c.pendingDirect, id)
+		c.pending[cmd.Priority] = removeCommand(c.pending[cmd.Priority], cmd)
 	}
 
 	cmd.Status = req.Status
@@ -306,18 +295,15 @@ func (c *CommandStorage) DeleteCommand(w http.ResponseWriter, r *http.Request) {
 
 	idStr := r.PathValue("id")
 	id, err := uuid.Parse(idStr)
-	elem, ok := c.direct[id]
+	cmd, ok := c.direct[id]
 	if err != nil || !ok {
 		writeJSONError(w, "Command not found", http.StatusNotFound)
 		return
 	}
 
-	cmd := elem.Value.(*Command)
-	// remove the command from the priority queue while maintaining FIFO order
-	c.queue[cmd.Priority].Remove(elem) // list isn't a container itself, just the pointers for all nodes that belong to it
+	c.queue[cmd.Priority] = removeCommand(c.queue[cmd.Priority], cmd)
 	if cmd.Status == StatusPending {
-		c.pending[cmd.Priority].Remove(c.pendingDirect[id])
-		delete(c.pendingDirect, id)
+		c.pending[cmd.Priority] = removeCommand(c.pending[cmd.Priority], cmd)
 	}
 
 	delete(c.direct, id)
@@ -328,6 +314,15 @@ func (c *CommandStorage) DeleteCommand(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
+}
+
+func removeCommand(queue []*Command, target *Command) []*Command {
+	for index, command := range queue {
+		if command == target {
+			return slices.Delete(queue, index, index+1)
+		}
+	}
+	return queue
 }
 
 //go:embed openapi.yaml
@@ -386,17 +381,10 @@ func newRouter(storage *CommandStorage) *http.ServeMux {
 
 func main() {
 	storage := &CommandStorage{
-		queue:         make(map[Priority]*list.List),
-		pending:       make(map[Priority]*list.List),
-		direct:        make(map[uuid.UUID]*list.Element),
-		pendingDirect: make(map[uuid.UUID]*list.Element),
+		queue:   make(map[Priority][]*Command),
+		pending: make(map[Priority][]*Command),
+		direct:  make(map[uuid.UUID]*Command),
 	}
-	storage.queue[PriorityHigh] = list.New()
-	storage.queue[PriorityMedium] = list.New()
-	storage.queue[PriorityLow] = list.New()
-	storage.pending[PriorityHigh] = list.New()
-	storage.pending[PriorityMedium] = list.New()
-	storage.pending[PriorityLow] = list.New()
 
 	port := os.Getenv("PORT")
 	if port == "" {
