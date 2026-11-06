@@ -1,7 +1,6 @@
 package main
 
 import (
-	"container/list"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,18 +15,17 @@ import (
 
 func newTestCommandStorage() *CommandStorage {
 	return &CommandStorage{
-		queue: map[Priority]*list.List{
-			PriorityHigh:   list.New(),
-			PriorityMedium: list.New(),
-			PriorityLow:    list.New(),
+		queue: map[Priority][]*Command{
+			PriorityHigh:   {},
+			PriorityMedium: {},
+			PriorityLow:    {},
 		},
-		pending: map[Priority]*list.List{
-			PriorityHigh:   list.New(),
-			PriorityMedium: list.New(),
-			PriorityLow:    list.New(),
+		pending: map[Priority][]*Command{
+			PriorityHigh:   {},
+			PriorityMedium: {},
+			PriorityLow:    {},
 		},
-		direct:        make(map[uuid.UUID]*list.Element),
-		pendingDirect: make(map[uuid.UUID]*list.Element),
+		direct: make(map[uuid.UUID]*Command),
 	}
 }
 
@@ -40,9 +38,10 @@ func addTestCommand(storage *CommandStorage, priority Priority, status Status, t
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 	}
-	storage.direct[command.Id] = storage.queue[priority].PushBack(command)
+	storage.direct[command.Id] = command
+	storage.queue[priority] = append(storage.queue[priority], command)
 	if status == StatusPending {
-		storage.pendingDirect[command.Id] = storage.pending[priority].PushBack(command)
+		storage.pending[priority] = append(storage.pending[priority], command)
 	}
 	return command
 }
@@ -314,7 +313,7 @@ func TestCreateCommandValidationAndTrim(t *testing.T) {
 				return
 			}
 
-			command := storage.queue[PriorityLow].Front().Value.(*Command)
+			command := storage.queue[PriorityLow][0]
 			if command.Command != "execute" {
 				t.Errorf("stored command = %q, want %q", command.Command, "execute")
 			}
