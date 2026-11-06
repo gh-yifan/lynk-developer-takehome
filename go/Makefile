@@ -13,9 +13,10 @@ MEMORY_K6_PROFILE ?= profile
 PPROF_ADDR ?= 127.0.0.1:6060
 PROFILE_ROOT ?= perf/profiles/$(LABEL)
 K6_PROFILE ?= throughput
+DELETE_BUCKET_SIZE ?= 100
+DELETE_RESULTS ?= perf/results/$(LABEL)/delete-staircase-$(QUEUE_SIZE).ndjson
 
-.PHONY: all benchmark memory
-
+.PHONY: all benchmark memory delete-staircase
 all: benchmark memory
 
 benchmark:
@@ -37,3 +38,15 @@ memory:
 		test -d "$$profile" && set -- "$$@" --run "$(LABEL):$(QUEUE_SIZE)=$$profile"; \
 	done; \
 		test "$$#" -gt 0 && python3 perf/plot_memory.py "$$@" --output "$(PROFILE_ROOT)/memory.svg"
+
+delete-staircase:
+	mkdir -p "$(RESULTS_DIR)" "$(dir $(DELETE_RESULTS))"
+	k6 run \
+		-e "BASE_URL=http://$(API_ADDR)" \
+		-e "QUEUE_SIZE=$(QUEUE_SIZE)" \
+		-e "DELETE_BUCKET_SIZE=$(DELETE_BUCKET_SIZE)" \
+		--out "json=$(DELETE_RESULTS)" \
+		perf/delete_staircase.js
+	python3 perf/plot_delete_staircase.py \
+		--run "$(LABEL)=$(DELETE_RESULTS)" \
+		--output "$(RESULTS_DIR)/delete-staircase-$(LABEL)-$(QUEUE_SIZE).svg"

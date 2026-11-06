@@ -54,6 +54,39 @@ python3 perf/plot_throughput.py \
   --output perf/results/comparison-throughput.svg
 ```
 
+## Delete-Only Queue-Drain Staircase
+
+Use this when comparing deletion behavior without concurrent POST, PATCH, or GET traffic. The K6 `setup()` phase first verifies the API queue is empty, creates the full baseline queue, and verifies its size. Only after setup finishes does a single VU issue DELETE requests sequentially until the queue is empty. Every DELETE latency is recorded and tagged with its queue-depth band. The chart averages all requests in each band (100 deletions by default), producing a latency-versus-remaining-depth staircase with many samples per point.
+
+Start the selected implementation from its own worktree. Then, from `test/perf` branch, navigate to the `go/` directory, run:
+
+```bash
+k6 run -e BASE_URL=http://127.0.0.1:8080 \
+  -e QUEUE_SIZE=20000 -e DELETE_BUCKET_SIZE=100 \
+  --out json=perf/results/main/delete-staircase-20000.ndjson \
+  perf/delete_staircase.js
+```
+
+The equivalent Make target runs K6 and generates the SVG:
+
+```bash
+make delete-staircase LABEL=main QUEUE_SIZE=20000 API_ADDR=127.0.0.1:8080 \
+  DELETE_BUCKET_SIZE=100
+```
+
+After the run, stop that API, start the other implementation on the same address with an empty in-memory queue, and repeat with a distinct `LABEL` (`dll`). The test refuses to start if the API queue is not empty. `DELETE_BUCKET_SIZE` controls how many consecutive deletes are averaged into each chart point; smaller buckets give more detailed curves but fewer samples per average. It measures the full HTTP DELETE request while the queue drains, including ID-map lookup, queue search/unlink or scan/shift, locks, HTTP handling, and response writing. It deliberately excludes simultaneous non-delete operations, so it isolates queue-size behavior from mixed-workload contention, but is not a pure in-process data-structure benchmark.
+
+Run the same K6 command for DLL with an output path under `perf/results/dll/`, then overlay both queue-drain curves:
+
+```bash
+python3 perf/plot_delete_staircase.py \
+  --run main=perf/results/main/delete-staircase-20000.ndjson \
+  --run dll=perf/results/dll/delete-staircase-20000.ndjson \
+  --output perf/results/delete-staircase-comparison.svg
+```
+
+The Make target runs K6 and generates the single-implementation chart automatically. Use `make delete-staircase LABEL=main QUEUE_SIZE=20000 API_ADDR=127.0.0.1:8080 DELETE_BUCKET_SIZE=100` for main, and repeat with `LABEL=dll` after restarting the DLL API.
+
 ## CPU and Memory Profiles
 
 Go pprof must profile the implementation process itself. The shared `perf/pprof_init.go` file is added to a temporary build using Go's `-overlay` option; it is not copied into or committed on the implementation branch, and it registers pprof on a separate loopback listener rather than changing the API mux.

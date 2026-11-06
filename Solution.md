@@ -122,6 +122,37 @@ python3 perf/plot_throughput.py \
 	--output perf/results/comparison-throughput.svg
 ```
 
+### Delete-Only Queue-Drain Staircase
+
+For a deletion-specific API comparison, use `perf/delete_staircase.js`. Its K6 setup phase first requires an empty queue, creates the entire requested queue, then verifies it is full. Only after setup has finished does one virtual user issue DELETE requests sequentially until the queue is empty. No POST, PATCH, or GET requests run concurrently with the measured delete phase. Every DELETE latency is recorded and tagged with its queue-depth band. The chart averages all requests in each band (100 deletions by default), producing a staircase as the queue drains. For a 20,000-command queue, each plotted point therefore averages 100 DELETE requests rather than representing one request.
+
+Start the chosen implementation from its worktree, then from `test/perf/go` run:
+
+```bash
+API_ADDR=127.0.0.1:8080 QUEUE_SIZE=20000 DELETE_BUCKET_SIZE=100 \
+	make delete-staircase LABEL=main
+```
+
+Restart the API so its in-memory queue is empty, then repeat against DLL:
+
+```bash
+API_ADDR=127.0.0.1:8080 QUEUE_SIZE=20000 DELETE_BUCKET_SIZE=100 \
+	make delete-staircase LABEL=dll
+```
+
+The target writes `perf/results/<label>/delete-staircase-<size>.ndjson` and an SVG chart. To compare both runs on one chart:
+
+```bash
+python3 perf/plot_delete_staircase.py \
+	--run main=perf/results/main/delete-staircase-20000.ndjson \
+	--run dll=perf/results/dll/delete-staircase-20000.ndjson \
+	--output perf/results/delete-staircase-comparison.svg
+```
+
+This measures full HTTP DELETE latency, including ID lookup, queue removal, lock and server overhead, but excludes other API operations during the drain. Keep machine, Go version, queue size, and test settings the same. It is an API-level deletion test, not a pure in-process data-structure benchmark.
+
+The previous queue-size K6 results were gathered before `main` was restored to the array-backed implementation. Rerun those comparisons before drawing conclusions from them.
+
 Repeat with the same machine, Go version, queue size, k6 settings, and similar system load. Verify each result's `summary-<size>.json` and k6 output; a threshold failure can return a nonzero exit even though result files were written. These latency/throughput runs need no code changes to either implementation, so they cannot create merge conflicts.
 
 ### CPU and Heap Profiling with Go Overlays
